@@ -1,0 +1,103 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Bot, BrainCircuit, CheckCircle2, ChevronDown, ChevronUp, CircleAlert, ClipboardCheck, Clock3, Download, FileText, Gamepad2, MonitorPlay, PersonStanding, Play, RotateCcw, Share2, ShieldCheck, Video, XCircle } from "lucide-react";
+import { stageLabels, type PipelineStage } from "@/lib/domain";
+import { StatusBadge } from "@/components/status-badge";
+import { Motion3DViewer } from "@/components/motion-3d-viewer";
+
+type AssetVersion = { id: string; contentType: string; schemaVersion: string; asset: { name: string; type: string } };
+type StageArtifact = { role: "INPUT" | "OUTPUT" | "PREVIEW" | "EVIDENCE"; assetVersion: AssetVersion };
+type WorkerResult = { state?: string; logs?: string[]; summary?: string; updatedAt?: string; message?: string };
+type StageAttempt = { id: string; attempt: number; status: string; startedAt?: string; endedAt?: string; result?: WorkerResult };
+type Stage = { id: string; stage: PipelineStage; status: string; position: number; adapter: string; attempts: StageAttempt[]; reviewTask: { id: string; status: string } | null; artifacts: StageArtifact[] };
+type Cost = { id: string; amountMinor: number; category: string; provider: string; kind: string; createdAt: string };
+type Job = { id: string; name: string; status: string; robotModel: string; estimateMinor: number; estimateCurrency: string; createdAt: string; stages: Stage[]; costs: Cost[]; inputAssetVersion: AssetVersion | null; worker: { ready: boolean; status: string; detail: string } };
+type PlaybackSync = { time: number; playing: boolean; onTimeChange: (time: number) => void; onPlayingChange: (playing: boolean) => void; muted?: boolean };
+
+const stageIcons: Record<PipelineStage, typeof Video> = { video_generation: Video, pose_extraction: PersonStanding, pose_review: ClipboardCheck, robot_retargeting: Bot, visualization: MonitorPlay, training: BrainCircuit, policy_evaluation: CheckCircle2, simulation_verification: Gamepad2 };
+const descriptions: Record<PipelineStage, string> = {
+  video_generation: "Generated source video for this run.",
+  pose_extraction: "PromptHMR extracts 3D human motion and the SMPL-X track.",
+  pose_review: "The extracted motion is checked before it is released to GMR.",
+  robot_retargeting: "GMR converts the approved human track to Unitree G1 joint motion.",
+  visualization: "The real Unitree G1 MuJoCo mesh is rendered from robot motion.",
+  training: "Training is not configured for this workspace.", policy_evaluation: "Policy evaluation is not configured for this workspace.", simulation_verification: "Simulation verification is not configured for this workspace.",
+};
+
+function artifactUrl(artifact: AssetVersion) { return `/api/assets/versions/${artifact.id}/content`; }
+function stageArtifact(stage: Stage, role: StageArtifact["role"]) { return stage.artifacts.find((artifact) => artifact.role === role)?.assetVersion; }
+function stageArtifacts(stage: Stage, role: StageArtifact["role"]) { return stage.artifacts.filter((artifact) => artifact.role === role).map((artifact) => artifact.assetVersion); }
+function isVideo(artifact?: AssetVersion) { return Boolean(artifact?.contentType.startsWith("video/")); }
+function prefer3dPose(previews: AssetVersion[]) { return previews.find((artifact) => artifact.schemaVersion.includes("pose-3d")) ?? previews[0]; }
+
+function ActionNotice({ stage, job, onAction, busy }: { stage?: Stage; job: Job; onAction: (url: string, body?: unknown) => void; busy: boolean }) {
+  if (!stage) return <section className="run-notice run-notice--complete"><CheckCircle2 /><div><small>RUN COMPLETE</small><h2>All selected stages completed</h2><p>The artifacts below are retained for review and reuse.</p></div></section>;
+  const retry = stage.status === "FAILED_RETRYABLE";
+  const review = stage.status === "AWAITING_REVIEW";
+  const running = stage.status === "RUNNING";
+  const queued = stage.status === "READY" || job.status === "QUEUED";
+  const heading = retry ? `${stageLabels[stage.stage]} failed` : review ? "Pose review needs approval" : running ? `${stageLabels[stage.stage]} is running` : queued ? `${stageLabels[stage.stage]} is ready` : `${stageLabels[stage.stage]} is waiting`;
+  const body = retry ? "Something went wrong while running this stage. You can retry it safely." : review ? "Approve once to automatically start the next available automated stage." : running ? "The worker has claimed this stage. New logs and artifacts appear here automatically." : queued ? "The worker is ready to run this stage." : "This stage becomes available when its predecessor completes.";
+  const icon = retry ? <CircleAlert /> : review ? <ShieldCheck /> : running ? <Clock3 /> : <Play />;
+  return <section className={`run-notice${retry ? " run-notice--error" : ""}`}><span>{icon}</span><div><small>{retry ? "ACTION REQUIRED" : "PIPELINE STATUS"}</small><h2>{heading}</h2><p>{body}</p></div><div className="run-notice__actions">{retry ? <button className="button danger-button" disabled={busy} onClick={() => onAction(`/api/jobs/${job.id}/stages/${stage.id}/retry`)}><RotateCcw size={15} /> Retry stage</button> : null}{review && stage.reviewTask ? <><button className="button button--primary" disabled={busy} onClick={() => onAction(`/api/review-tasks/${stage.reviewTask!.id}/approve`, { reviewedBy: "operator", decisionNote: "Approved from RoboMotion" })}><ShieldCheck size={15} /> Approve & continue</button><button className="button button--subtle" disabled={busy} onClick={() => onAction(`/api/review-tasks/${stage.reviewTask!.id}/reject`, { reviewedBy: "operator", decisionNote: "Rejected from RoboMotion" })}><XCircle size={15} /> Reject</button></> : null}{queued ? <button className="button button--primary" disabled={busy} onClick={() => onAction(`/api/jobs/${job.id}/dispatch`)}><Play size={15} /> Start stage</button> : null}</div></section>;
+}
+
+function SyncedVideo({ artifact, sync }: { artifact: AssetVersion; sync: PlaybackSync }) {
+  const video = useRef<HTMLVideoElement>(null);
+  useEffect(() => { const element = video.current; if (!element || !Number.isFinite(sync.time) || Math.abs(element.currentTime - sync.time) < .14) return; element.currentTime = Math.min(sync.time, Number.isFinite(element.duration) ? element.duration : sync.time); }, [sync.time]);
+  useEffect(() => { const element = video.current; if (!element) return; if (sync.playing) void element.play().catch(() => undefined); else element.pause(); }, [sync.playing]);
+  return <video ref={video} controls muted={sync.muted} preload="metadata" src={artifactUrl(artifact)} onTimeUpdate={(event) => sync.onTimeChange(event.currentTarget.currentTime)} onPlay={() => sync.onPlayingChange(true)} onPause={() => sync.onPlayingChange(false)}>Your browser cannot play this video.</video>;
+}
+
+function MediaPanel({ artifact, title, empty, sync }: { artifact?: AssetVersion; title: string; empty: string; sync?: PlaybackSync }) {
+  if (!artifact) return <div className="run-media run-media--empty"><CircleAlert size={18} /><b>{title}</b><p>{empty}</p></div>;
+  if (isVideo(artifact)) return <figure className={`run-media${artifact.schemaVersion.includes("visualization.robot-preview") ? " run-media--mesh" : ""}`}><figcaption><b>{title}</b><span>{artifact.asset.name}</span></figcaption>{sync ? <SyncedVideo artifact={artifact} sync={sync} /> : <video controls preload="metadata" src={artifactUrl(artifact)}>Your browser cannot play this video.</video>}</figure>;
+  return <div className="run-media run-media--file"><FileText size={20} /><b>{title}</b><strong>{artifact.asset.name}</strong><a className="button button--subtle" href={artifactUrl(artifact)} target="_blank">Open artifact</a></div>;
+}
+
+function SourceStage({ artifact }: { artifact?: AssetVersion }) {
+  const video = isVideo(artifact); const title = video ? "Source Video" : "Run Input";
+  return <article className="run-stage run-stage--source"><header className="run-stage__header"><span className="run-stage__number"><CheckCircle2 size={16} /></span><span className="run-stage__icon"><Video size={19} /></span><div><small>STEP 1 · SOURCE</small><h2>{title}</h2><p>{artifact ? (video ? "Uploaded video retained as the immutable source for this pipeline run." : "A previously produced artifact is the immutable input for this partial pipeline run.") : "The selected source artifact will appear here."}</p></div><StatusBadge status={artifact ? "SUCCEEDED" : "PENDING"} /></header><div className="run-stage__content"><MediaPanel artifact={artifact} title={video ? "Source video" : "Input artifact"} empty="No input artifact was attached to this run." /></div></article>;
+}
+
+function StageCard({ stage, stages, job, expanded, onToggle, onAction, busy }: { stage: Stage; stages: Stage[]; job: Job; expanded: boolean; onToggle: () => void; onAction: (url: string, body?: unknown) => void; busy: boolean }) {
+  const [timelineTime, setTimelineTime] = useState(0); const [timelinePlaying, setTimelinePlaying] = useState(false);
+  const Icon = stageIcons[stage.stage];
+  const stageIndex = stages.findIndex((candidate) => candidate.id === stage.id);
+  const previous = stages[stageIndex - 1];
+  const input = stageArtifact(stage, "INPUT") ?? (stageIndex === 0 ? job.inputAssetVersion ?? undefined : undefined);
+  const output = stageArtifact(stage, "OUTPUT");
+  const previews = stageArtifacts(stage, "PREVIEW");
+  const previousPreviews = previous ? stageArtifacts(previous, "PREVIEW") : [];
+  const previousPreview = prefer3dPose(previousPreviews);
+  const downstreamVisualization = stages.slice(stageIndex + 1).find((candidate) => candidate.stage === "visualization");
+  const downstreamPreview = downstreamVisualization ? stageArtifact(downstreamVisualization, "OUTPUT") : undefined;
+  const sceneArtifact = stage.artifacts.find((artifact) => artifact.assetVersion.schemaVersion.includes("3d-scene"))?.assetVersion;
+  const upstreamPoseScene = stages.slice(0, stageIndex).reverse().flatMap((candidate) => candidate.artifacts.map((artifact) => artifact.assetVersion)).find((artifact) => artifact.schemaVersion.includes("pose-3d-scene"));
+  const ownPreview = stage.stage === "pose_extraction" ? prefer3dPose(previews) : previews[0];
+  // Existing runs created before direct retarget previews are still useful:
+  // surface their completed visualization result on the retargeting card.
+  const outputVisual = ownPreview ?? (isVideo(output) ? output : undefined) ?? (stage.stage === "robot_retargeting" && isVideo(downstreamPreview) ? downstreamPreview : undefined);
+  const priorVisual = isVideo(input) ? input : previousPreview;
+  const additionalPreviews = previews.filter((artifact) => artifact.id !== outputVisual?.id);
+  const outputTitle = stage.stage === "pose_extraction" ? "3D SMPL-X motion" : stage.stage === "robot_retargeting" ? "Unitree G1 motion preview" : `${stageLabels[stage.stage]} output`;
+  const synchronized = stage.stage === "pose_extraction" ? { time: timelineTime, playing: timelinePlaying, onTimeChange: setTimelineTime, onPlayingChange: setTimelinePlaying } : undefined;
+  const prefersMeshVideo = stage.stage === "visualization" && Boolean(outputVisual);
+  return <article className={`run-stage run-stage--${stage.stage}${stage.status === "FAILED_RETRYABLE" ? " run-stage--failed" : ""}`}><header className="run-stage__header"><span className="run-stage__number">{stage.status === "SUCCEEDED" ? <CheckCircle2 size={16} /> : stage.position + 2}</span><span className="run-stage__icon"><Icon size={19} /></span><div><small>STEP {stage.position + 2}</small><h2>{stageLabels[stage.stage]}</h2><p>{descriptions[stage.stage]}</p></div><StatusBadge status={stage.status} /><button className="run-stage__details" type="button" onClick={onToggle}>View details {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}</button></header>{expanded ? <div className="run-stage__content">{stage.status === "FAILED_RETRYABLE" ? <div className="run-stage__retry"><CircleAlert size={15} /><span>This stage failed. You can retry it safely.</span><button className="button danger-button" disabled={busy} onClick={() => onAction(`/api/jobs/${job.id}/stages/${stage.id}/retry`)}><RotateCcw size={14} /> Retry stage</button></div> : null}<div className="run-stage__visuals">{stage.stage === "robot_retargeting" && upstreamPoseScene ? <Motion3DViewer sceneUrl={artifactUrl(upstreamPoseScene)} title="Human SMPL-X input" /> : priorVisual ? <MediaPanel artifact={priorVisual} title={isVideo(input) ? "Input video" : `Input from ${previous ? stageLabels[previous.stage] : "source"}`} empty="" sync={synchronized} /> : null}{prefersMeshVideo && outputVisual ? <MediaPanel artifact={outputVisual} title="Unitree G1 MuJoCo mesh visualization" empty="" /> : sceneArtifact ? <Motion3DViewer sceneUrl={artifactUrl(sceneArtifact)} title={outputTitle} downloadUrl={outputVisual ? artifactUrl(outputVisual) : undefined} sync={synchronized} /> : outputVisual ? <MediaPanel artifact={outputVisual} title={outputTitle} empty="" sync={synchronized ? { ...synchronized, muted: true } : undefined} /> : null}{!priorVisual && !outputVisual && !sceneArtifact && !(stage.stage === "robot_retargeting" && upstreamPoseScene) ? <MediaPanel artifact={undefined} title={stageLabels[stage.stage]} empty={stage.status === "FAILED_RETRYABLE" ? "No output was generated. Review the stage log and retry when ready." : "This stage is waiting for a visual artifact from its predecessor or adapter."} /> : null}</div>{additionalPreviews.length ? <div className="run-stage__supplemental">{additionalPreviews.map((artifact) => <MediaPanel key={artifact.id} artifact={artifact} title={artifact.schemaVersion.includes("pose-skeleton") ? "2D tracking overlay" : "Additional evidence"} empty="" sync={synchronized ? { ...synchronized, muted: true } : undefined} />)}</div> : null}</div> : null}</article>;
+}
+
+export function JobDetail({ jobId }: { jobId: string }) {
+  const [job, setJob] = useState<Job | null>(null); const [message, setMessage] = useState<string | null>(null); const [busy, setBusy] = useState(false); const [expanded, setExpanded] = useState<string[]>([]);
+  const load = async () => { try { const response = await fetch(`/api/jobs/${jobId}`); const payload = await response.json(); if (!response.ok) throw new Error(payload.error ?? "Unable to load job."); const nextJob = payload.data as Job; setJob(nextJob); setExpanded((current) => current.length ? current : nextJob.stages.map((stage) => stage.id)); } catch (error) { setMessage(error instanceof Error ? error.message : "Unable to load job."); } };
+  useEffect(() => { void load(); const refresh = window.setInterval(() => void load(), 3000); return () => window.clearInterval(refresh); }, [jobId]);
+  async function action(url: string, body?: unknown) { setBusy(true); setMessage(null); try { const response = await fetch(url, { method: "POST", headers: body ? { "Content-Type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined }); const payload = await response.json(); const autoState = payload.data?.autoDispatch?.state; setMessage(response.ok ? (autoState === "running" ? "Pose approved and the next stage was dispatched." : "The pipeline was updated.") : payload.error ?? "Action failed."); await load(); } finally { setBusy(false); } }
+  const activeStage = useMemo(() => job?.stages.find((stage) => ["RUNNING", "AWAITING_REVIEW", "FAILED_RETRYABLE", "READY"].includes(stage.status)) ?? job?.stages.find((stage) => stage.status === "PENDING"), [job]);
+  if (!job) return <p className="empty-state">{message ?? "Loading job…"}</p>;
+  const actualCost = job.costs.filter((cost) => cost.kind !== "ESTIMATED").reduce((total, cost) => total + cost.amountMinor, 0);
+  const artifacts = job.stages.flatMap((stage) => stage.artifacts.map((artifact) => ({ ...artifact, stage }))).filter((entry, index, entries) => entries.findIndex((candidate) => candidate.assetVersion.id === entry.assetVersion.id && candidate.role === entry.role) === index);
+  const latestDownload = [...artifacts].reverse().find((entry) => entry.role === "OUTPUT")?.assetVersion;
+  const completedCount = job.stages.filter((stage) => stage.status === "SUCCEEDED").length;
+  return <div className="run-detail-page"><header className="run-detail-header"><div><p><Link href="/jobs">Jobs</Link><span>›</span> Job details <span>›</span> {job.name}</p><div><div><h1>{job.name}</h1><small>Robot: {job.robotModel.replace("_", " ")} · Started {new Date(job.createdAt).toLocaleString()} · {completedCount} of {job.stages.length} selected stages completed</small></div><StatusBadge status={job.status} /></div></div><div className="run-detail-header__actions"><button className="button button--subtle" onClick={() => navigator.clipboard?.writeText(window.location.href)}><Share2 size={15} /> Share</button>{latestDownload ? <a className="button button--primary" href={artifactUrl(latestDownload)}><Download size={15} /> Download latest</a> : null}</div></header><section className="run-rail" aria-label="Pipeline stages"><div className="run-rail__node run-rail__node--done"><span><Video size={17} /></span><b>1</b><small>Source Video</small><em>Completed</em></div>{job.stages.map((stage) => { const Icon = stageIcons[stage.stage]; const complete = stage.status === "SUCCEEDED"; const active = stage.id === activeStage?.id; return <div className={`run-rail__node${complete ? " run-rail__node--done" : ""}${active ? " run-rail__node--active" : ""}`} key={stage.id}><span><Icon size={17} /></span><b>{stage.position + 2}</b><small>{stageLabels[stage.stage]}</small><em>{complete ? "Completed" : stage.status === "FAILED_RETRYABLE" ? "Failed" : stage.status.replaceAll("_", " ").toLowerCase()}</em></div>; })}</section><ActionNotice stage={activeStage} job={job} onAction={action} busy={busy} />{message ? <p className="form-success">{message}</p> : null}<div className="run-detail-layout"><main className="run-stages"><div className="run-section-heading"><div><small>PIPELINE</small><h2>Stage-by-stage results</h2></div><span>Auto-refreshing</span></div><SourceStage artifact={job.inputAssetVersion ?? undefined} />{job.stages.map((stage) => <StageCard key={stage.id} stage={stage} stages={job.stages} job={job} expanded={expanded.includes(stage.id)} onToggle={() => setExpanded((current) => current.includes(stage.id) ? current.filter((id) => id !== stage.id) : [...current, stage.id])} onAction={action} busy={busy} />)}</main><aside className="run-sidebar"><article><div className="run-sidebar__heading"><h2>Job Summary</h2><StatusBadge status={job.status} /></div><dl><div><dt>Robot</dt><dd>{job.robotModel.replace("_", " ")}</dd></div><div><dt>Progress</dt><dd>{completedCount} of {job.stages.length} stages</dd></div><div><dt>Active stage</dt><dd>{activeStage ? stageLabels[activeStage.stage] : "Complete"}</dd></div><div><dt>Estimated cost</dt><dd>${(job.estimateMinor / 100).toFixed(2)}</dd></div>{actualCost ? <div><dt>Actual cost</dt><dd>${(actualCost / 100).toFixed(2)}</dd></div> : null}</dl></article><article className="run-artifacts"><div className="run-sidebar__heading"><h2>Artifacts</h2><span>{artifacts.length}</span></div>{artifacts.length ? <ul>{artifacts.map(({ assetVersion, role, stage }) => <li key={`${stage.id}-${role}-${assetVersion.id}`}><a href={artifactUrl(assetVersion)} target="_blank"><FileText size={14} /><span><b>{assetVersion.asset.name}</b><small>{stageLabels[stage.stage]} · {role.toLowerCase()}</small></span></a></li>)}</ul> : <p>No artifacts have been published yet.</p>}</article></aside></div></div>;
+}

@@ -1,0 +1,38 @@
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+ARG PROMPTHMR_REF=4f8915c5b9603344c56e95fadb9a01a23ba2272d
+ARG GMR_REF=069b4fd48f440e813b2b4d69255c70f53e5f83fb
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CONDA_DIR=/opt/conda \
+    PATH=/opt/conda/bin:$PATH \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential ca-certificates curl ffmpeg git libegl1 libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 unzip wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && wget -qO /tmp/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-py312_25.1.1-2-Linux-x86_64.sh \
+    && bash /tmp/miniconda.sh -b -p "$CONDA_DIR" \
+    && rm /tmp/miniconda.sh \
+    && conda config --system --add channels conda-forge
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npx prisma generate \
+    && git clone https://github.com/taeyoun811/PromptHMR.git /opt/prompt-hmr \
+    && git -C /opt/prompt-hmr checkout "$PROMPTHMR_REF" \
+    && git clone https://github.com/taeyoun811/GMR.git /opt/gmr \
+    && git -C /opt/gmr checkout "$GMR_REF"
+
+ENV ROBOMOTION_PROMPTHMR_ROOT=/opt/prompt-hmr \
+    ROBOMOTION_GMR_ROOT=/opt/gmr \
+    ROBOMOTION_PROMPTHMR_ENV=phmr_pt2.4 \
+    ROBOMOTION_GMR_ENV=gmr \
+    MUJOCO_GL=egl
+
+CMD ["npm", "run", "worker"]

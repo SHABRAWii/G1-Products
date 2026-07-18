@@ -1,0 +1,30 @@
+# Local GPU pipeline worker
+
+The dashboard sends real pre-training work to a separate worker process. The worker uses a disposable directory per stage, stores its outputs in MinIO, and records each artifact in PostgreSQL.
+
+## Stages implemented
+
+- Pose extraction: source video → PromptHMR → `smplx.npz`; stores the direct PromptHMR `results.pkl` evidence.
+- Robot retargeting: reviewed SMPL-X → GMR → Unitree G1 29-DoF `robot_motion.pkl`.
+- Visualization: GMR robot motion → headless MuJoCo render → MP4 preview.
+
+## Required model environments
+
+Set these values in the terminal that starts the worker:
+
+```bash
+export ROBOMOTION_PROMPTHMR_ROOT=/path/to/PromptHMR
+export ROBOMOTION_GMR_ROOT=/path/to/GMR
+export ROBOMOTION_PROMPTHMR_ENV=phmr
+export ROBOMOTION_GMR_ENV=gmr
+export DATABASE_URL='postgresql://robomotion:robomotion@localhost:5432/robomotion?schema=public'
+export OBJECT_STORAGE_ENDPOINT=http://localhost:9000
+export OBJECT_STORAGE_BUCKET=robomotion
+export OBJECT_STORAGE_ACCESS_KEY=robomotion
+export OBJECT_STORAGE_SECRET_KEY=robomotion-local-secret
+npm run worker
+```
+
+PromptHMR and GMR are direct upstream installations. Their source trees and model weights must be installed in their respective Conda environments. PromptHMR has a non-commercial research-use license; verify the intended deployment is permitted before using it beyond that scope.
+
+The dashboard worker and adapters are RoboMotion code. They import the installed model packages directly and do not copy model code into this repository.

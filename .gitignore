@@ -1,0 +1,35 @@
+# Dependencies and builds
+node_modules/
+.next/
+coverage/
+*.tsbuildinfo
+
+# Local and server secrets. Commit only the documented templates.
+.env
+.env.*
+!.env.example
+!.env.server.example
+.robomotion/
+
+# Python/runtime output
+__pycache__/
+*.py[cod]
+*.log
+MUJOCO_LOG.TXT
+
+# Local development/agent metadata and generated knowledge graphs
+.claude/
+.codex/
+graphify-out/
+AGENTS.md
+CLAUDE.md
+
+# Development-only visual fixtures
+app/dev/
+public/dev-fixtures/
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+*~
