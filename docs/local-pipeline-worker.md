@@ -6,7 +6,7 @@ The dashboard sends real pre-training work to a separate worker process. The wor
 
 - Pose extraction: source video → PromptHMR → `smplx.npz`; stores the direct PromptHMR `results.pkl` evidence.
 - Robot retargeting: reviewed SMPL-X → GMR → Unitree G1 29-DoF `robot_motion.pkl`.
-- Visualization: GMR robot motion → headless MuJoCo render → MP4 preview.
+- Visualization: GMR robot motion → official G1 mesh transforms → interactive digital twin + matching headless MP4 evidence.
 
 ## Required model environments
 
@@ -15,8 +15,10 @@ Set these values in the terminal that starts the worker:
 ```bash
 export ROBOMOTION_PROMPTHMR_ROOT=/path/to/PromptHMR
 export ROBOMOTION_GMR_ROOT=/path/to/GMR
+export ROBOMOTION_TRAIN_ROOT=/path/to/unitree_rl_mjlab
 export ROBOMOTION_PROMPTHMR_ENV=phmr
 export ROBOMOTION_GMR_ENV=gmr
+export ROBOMOTION_TRAIN_ENV=uniTrain
 export DATABASE_URL='postgresql://robomotion:robomotion@localhost:5432/robomotion?schema=public'
 export OBJECT_STORAGE_ENDPOINT=http://localhost:9000
 export OBJECT_STORAGE_BUCKET=robomotion
