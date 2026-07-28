@@ -1,6 +1,7 @@
 # Dependencies and builds
 node_modules/
 .next/
+.next-dev/
 coverage/
 *.tsbuildinfo
 
