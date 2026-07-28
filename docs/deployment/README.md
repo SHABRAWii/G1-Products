@@ -64,7 +64,7 @@ Do not raise these simply because the server has a larger GPU. Validate output q
 bash deploy/deploy-server.sh
 ```
 
-The script runs the NVIDIA/Docker/secret/disk preflight, validates Compose, builds images, applies Prisma migrations, starts PostgreSQL and MinIO, bootstraps PromptHMR/GMR, and starts the worker.
+The script runs the NVIDIA/Docker/secret/disk preflight, validates Compose, builds images, applies Prisma migrations, starts PostgreSQL and MinIO, bootstraps PromptHMR/GMR, and starts the worker. The GPU-worker image also installs headless Chrome and FFmpeg. Its internal `ROBOMOTION_DASHBOARD_URL=http://app:3000` connection lets visualization jobs capture the production Three.js viewer directly; no separate Pyrender look is used for normal MP4 evidence.
 
 The first model bootstrap downloads and verifies many gigabytes. Follow it with:
 
@@ -104,7 +104,7 @@ The dashboard must report the worker as `ready`. Upload a short, fixed-camera, s
 Pose extraction → Pose review → Robot retargeting → Visualization
 ```
 
-Confirm that the Job Details page contains the immutable input video, PromptHMR outputs and logs, review decision, GMR motion, and the white-background Unitree G1 MuJoCo render.
+Confirm that the Job Details page contains the immutable input video, PromptHMR outputs and logs, review decision, GMR motion, the interactive Unitree G1 digital twin, and matching digital-twin MP4 evidence.
 
 ## Updating
 

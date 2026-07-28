@@ -163,6 +163,16 @@ install_gmr() {
   if ! conda run -n "$GMR_ENV" python -c 'import general_motion_retargeting' >/dev/null 2>&1; then conda run -n "$GMR_ENV" python -m pip install -e "$GMR_DIR"; fi
 }
 
+install_digital_twin_renderer() {
+  conda run -n "$GMR_ENV" python -m pip install \
+    trimesh==4.10.0 \
+    pyglet==1.5.31 \
+    freetype-py==2.5.1 \
+    six==1.17.0
+  # Keep the modern PyOpenGL installed with MuJoCo; pyrender's old strict pin is incompatible.
+  conda run -n "$GMR_ENV" python -m pip install pyrender==0.1.45 --no-deps
+}
+
 install_prompthmr_base() {
   if ! conda_environment_exists "$PHMR_ENV"; then conda create -n "$PHMR_ENV" python=3.11.9 -c conda-forge -y; fi
   conda_environment_exists "$PHMR_ENV" || fail "Conda did not create $PHMR_ENV."
@@ -309,6 +319,7 @@ mkdir -p "$SOURCE_ROOT" "$MODEL_CACHE" "$LOG_DIR"
 run_stage "Synchronizing direct model sources" "Pinned PromptHMR and GMR upstream repositories" sync_sources
 run_stage "Preparing persistent model storage" "Models and checkpoints survive future installer runs" prepare_persistence
 if ! conda run -n "$GMR_ENV" python -c 'import general_motion_retargeting' >/dev/null 2>&1; then run_stage "Installing GMR" "Robot retargeting engine and its Python dependencies" install_gmr; else cached_stage "GMR" "Direct retargeting package import passed"; fi
+if ! conda run -n "$GMR_ENV" python -c 'import pyrender, trimesh; assert pyrender.__version__ == "0.1.45"; assert trimesh.__version__ == "4.10.0"' >/dev/null 2>&1; then run_stage "Installing digital-twin renderer" "Exact Unitree STL rendering for MP4 evidence" install_digital_twin_renderer; else cached_stage "digital-twin renderer" "Exact STL renderer imports and pinned versions passed"; fi
 if conda_environment_exists "$PHMR_ENV" && conda run -n "$PHMR_ENV" python -m pip --version >/dev/null 2>&1; then cached_stage "PromptHMR environment" "Python 3.11 and pip in $PHMR_ENV"; else run_stage "Preparing PromptHMR environment" "Python 3.11 and pip in $PHMR_ENV" install_prompthmr_base; fi
 if ! conda run -n "$PHMR_ENV" python -c 'import torch; assert torch.__version__.startswith("2.4.")' >/dev/null 2>&1; then run_stage "Installing PyTorch CUDA 12.1" "Large GPU package download; this can take several minutes" install_pytorch; else cached_stage "PyTorch CUDA 12.1" "Installed version and CUDA wheel contract passed"; fi
 if ! conda run -n "$PHMR_ENV" python -c 'import torch_scatter' >/dev/null 2>&1; then run_stage "Installing torch-scatter" "GPU geometry operator for PromptHMR" install_torch_scatter; else cached_stage "torch-scatter" "GPU geometry operator import passed"; fi
@@ -338,6 +349,7 @@ ENV_FILE="$MODEL_ROOT/worker-models.env"
 cat > "$ENV_FILE" <<EOF
 export ROBOMOTION_PROMPTHMR_ROOT='$PHMR_DIR'
 export ROBOMOTION_GMR_ROOT='$GMR_DIR'
+export ROBOMOTION_MODEL_CACHE='$MODEL_CACHE'
 export ROBOMOTION_PROMPTHMR_ENV='$PHMR_ENV'
 export ROBOMOTION_GMR_ENV='$GMR_ENV'
 EOF
