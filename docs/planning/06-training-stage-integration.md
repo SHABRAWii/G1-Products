@@ -17,6 +17,12 @@ Status report for wiring `unitree_rl_mjlab` in as the real `TRAINING` pipeline s
 
 6. **Tests.** `tests/test_training_adapter.py`, wired into `npm run test:motion`'s existing stage. Fixed a regression introduced earlier in this work (a stale, unrelated `.robomotion/worker-models.env` file had been moved aside for local testing, which broke that script's unconditional `source` of it — made the source conditional with a default).
 
+7. **UI.** Two parts, done last as planned:
+   - `components/new-job-form.tsx` was structurally blocking training from ever being created through the real dashboard: `entryPoints` (the Start Stage options) didn't list `training` at all, and `availableEndStages` computed `pipelineStages.slice(startIndex, indexOf("training"))` — an *exclusive* end bound that capped the End Stage dropdown at `visualization`. Fixed both: added a `training` entry to `entryPoints`, and changed the slice bound to `indexOf("training") + 1`.
+   - `app/training-policies/page.tsx` was a 5-line placeholder stating training was "intentionally disabled" — no longer true. Replaced with a real `TrainingRunTable` component (new file, mirrors `JobTable`'s exact pattern: client component, fetch `/api/training-runs` on mount, `StatusBadge`, link out to the underlying job) rendering real data.
+   - **Verified in a real running instance**, not just typechecked: started the dev server, confirmed via the actual rendered HTML that both the Start Stage and End Stage `<select>` elements now list all 6 stages through `training` with correct slice math for every start-stage combination (not just the training-specific case), confirmed the training-policies page renders the correct empty state (no `TrainingRun` rows exist yet, expected), and confirmed a clean dev-server log with no compile or runtime errors across all requests.
+   - Deliberately not built here (not scope creep — matches earlier decisions): no recipe-selection UI (recipes are fixed/hardcoded by choice), no `Policy`/`PolicyVersion` promotion UI, no metrics charts/dataset selection/evaluation comparisons from the original product-and-UX plan's larger vision — the backend doesn't support any of that yet.
+
 ## Best-checkpoint tracking — investigated, fixed, externalized
 
 Separately, the user had hand-committed a custom "save the best checkpoint" feature directly into their local `unitree_rl_mjlab` git checkout.
@@ -43,7 +49,6 @@ Walked `mjlab==1.2.0`'s complete transitive `Requires:` graph (119 packages) and
 ## Explicitly flagged and deferred (not oversights)
 
 - **`lib/stage-registry.ts`'s stale `inputContracts`.** Still declares a made-up `dataset.training/v1` contract instead of the real `motion.robot/v1`. Confirmed this field is only read by `/api/stages`, which nothing currently calls — zero runtime effect today. Left as-is by explicit instruction; revisit only if something starts actually consuming it.
-- **The UI.** `/training-policies` is still a placeholder; the New Job form has no recipe selector (recipes are fixed/hardcoded, not user-editable, by choice). Deliberately being done last, after tests.
 - **`Policy`/`PolicyVersion`/`RobotModel` catalog support.** Not built. Creating a `Policy` requires a `RobotModel` foreign key, and nothing in the app seeds `RobotModel` rows anywhere today — a separate gap from training itself.
 - **Dual-worker architecture.** Recommended, not built. Next planned feature: a genuinely separate training worker (own image, own service, stage-partitioned polling, separate heartbeat identity) so training no longer blocks the rest of the pipeline.
 - **The torch/CUDA install line is unverified.** `torch==2.13.0 --index-url .../cu130` in the installer script is a best-effort reconstruction of what's proven to work in the development environment (confirmed via `pip show`/`torch.version.cuda`), not something re-verified by an actual fresh install.
