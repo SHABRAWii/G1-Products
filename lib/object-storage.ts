@@ -64,11 +64,21 @@ export async function putArtifact(input: { workspaceId: string; assetId: string;
   return { storageKey, checksum, byteSize: input.body.byteLength, bucket: settings.bucket };
 }
 
-export async function getArtifact(storageKey: string) {
+export async function getArtifact(storageKey: string, range?: string) {
   const { settings, s3 } = await ensureBucket();
-  const output = await s3.send(new GetObjectCommand({ Bucket: settings.bucket, Key: storageKey }));
+  const output = await s3.send(new GetObjectCommand({
+    Bucket: settings.bucket,
+    Key: storageKey,
+    ...(range ? { Range: range } : {}),
+  }));
   if (!output.Body || !("transformToWebStream" in output.Body)) throw new Error("The stored artifact could not be streamed.");
-  return { body: output.Body.transformToWebStream(), contentType: output.ContentType ?? "application/octet-stream", contentLength: output.ContentLength };
+  return {
+    body: output.Body.transformToWebStream(),
+    contentType: output.ContentType ?? "application/octet-stream",
+    contentLength: output.ContentLength,
+    contentRange: output.ContentRange,
+    acceptRanges: output.AcceptRanges,
+  };
 }
 
 export async function getArtifactBytes(storageKey: string) {

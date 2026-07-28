@@ -104,7 +104,7 @@ The dashboard must report the worker as `ready`. Upload a short, fixed-camera, s
 Pose extraction → Pose review → Robot retargeting → Visualization
 ```
 
-Confirm that the Job Details page contains the immutable input video, PromptHMR outputs and logs, review decision, GMR motion, and the white-background Unitree G1 MuJoCo render.
+Confirm that the Job Details page contains the immutable input video, PromptHMR outputs and logs, review decision, GMR motion, the interactive Unitree G1 digital twin, and matching digital-twin MP4 evidence.
 
 ## Updating
 

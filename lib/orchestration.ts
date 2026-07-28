@@ -157,6 +157,48 @@ export async function retryJobStage(jobId: string, stageId: string) {
   });
 }
 
+export async function rerunVisualizationStage(jobId: string, stageId: string) {
+  return prisma.$transaction(async (tx) => {
+    const stage = await tx.jobStage.findFirst({
+      where: { id: stageId, jobId },
+      include: {
+        job: { include: { stages: { select: { id: true, status: true } } } },
+        artifacts: { where: { role: StageArtifactRole.INPUT }, select: { id: true } },
+      },
+    });
+    if (!stage) throw new OrchestrationError("Stage was not found for this job.", 404);
+    if (stage.stage !== PipelineStage.VISUALIZATION) {
+      throw new OrchestrationError("Only the visualization stage can be re-rendered.");
+    }
+    if (stage.status !== StageStatus.SUCCEEDED) {
+      throw new OrchestrationError("Only a completed visualization stage can be re-rendered.");
+    }
+    if (!stage.artifacts.length) {
+      throw new OrchestrationError("The visualization stage has no robot-motion input.");
+    }
+    const active = stage.job.stages.find((candidate) =>
+      candidate.status === StageStatus.RUNNING || candidate.status === StageStatus.LEASED
+    );
+    if (active) throw new OrchestrationError("Another stage is already running for this job.");
+    await tx.jobStage.update({
+      where: { id: stageId },
+      data: { status: StageStatus.READY },
+    });
+    await tx.job.update({
+      where: { id: jobId },
+      data: { status: JobStatus.QUEUED },
+    });
+    await recordJobEvent(tx, {
+      jobId,
+      type: "visualization_rerender_requested",
+      stage: PipelineStage.VISUALIZATION,
+      message: "The Unitree G1 digital-twin MP4 was queued for re-rendering.",
+      metadata: { stageId },
+    });
+    return { jobId, stageId, state: "queued" as const };
+  });
+}
+
 export async function approveReviewTask(reviewTaskId: string, reviewedBy?: string, decisionNote?: string) {
   return prisma.$transaction(async (tx) => {
     const task = await tx.reviewTask.findUnique({ where: { id: reviewTaskId }, include: { jobStage: { include: { artifacts: { where: { role: StageArtifactRole.INPUT } } } } } });

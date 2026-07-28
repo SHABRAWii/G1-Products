@@ -22,11 +22,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <Link className="brand" href="/" aria-label="RoboMotion home"><span className="brand__mark"><Bot size={18} strokeWidth={2.2} /></span><span>RoboMotion</span></Link>
+        <Link className="brand" href="/" aria-label="RoboMotion home"><span className="brand__mark"><Bot size={19} strokeWidth={2.1} /></span><span>RoboMotion</span></Link>
         <nav aria-label="Main navigation">
           {navigation.map(({ href, label, icon: Icon }) => {
             const active = href === "/" ? pathname === href : pathname.startsWith(href);
-            return <Link className={`nav-link${active ? " nav-link--active" : ""}`} href={href} key={href}><Icon size={18} strokeWidth={active ? 2.25 : 1.8} /> <span>{label}</span></Link>;
+            return <Link className={`nav-link${active ? " nav-link--active" : ""}`} href={href} key={href}><span className="nav-link__icon"><Icon size={17} strokeWidth={active ? 2.25 : 1.8} /></span><span>{label}</span></Link>;
           })}
         </nav>
         <div className="sidebar__bottom">
