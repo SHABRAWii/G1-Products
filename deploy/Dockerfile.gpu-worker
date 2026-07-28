@@ -2,6 +2,9 @@ FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
 ARG PROMPTHMR_REF=4f8915c5b9603344c56e95fadb9a01a23ba2272d
 ARG GMR_REF=069b4fd48f440e813b2b4d69255c70f53e5f83fb
+# Latest genuine upstream commit on unitreerobotics/unitree_rl_mjlab's main
+# branch as of this pin (verified via `git fetch origin`), not any fork.
+ARG TRAIN_REF=1425b15f73bd4095f0df53709d7c389c3eb9e790
 
 ENV DEBIAN_FRONTEND=noninteractive \
     CONDA_DIR=/opt/conda \
@@ -27,12 +30,17 @@ RUN npx prisma generate \
     && git clone https://github.com/taeyoun811/PromptHMR.git /opt/prompt-hmr \
     && git -C /opt/prompt-hmr checkout "$PROMPTHMR_REF" \
     && git clone https://github.com/taeyoun811/GMR.git /opt/gmr \
-    && git -C /opt/gmr checkout "$GMR_REF"
+    && git -C /opt/gmr checkout "$GMR_REF" \
+    && git clone https://github.com/unitreerobotics/unitree_rl_mjlab.git /opt/unitree-rl-mjlab \
+    && git -C /opt/unitree-rl-mjlab checkout "$TRAIN_REF" \
+    && git -C /opt/unitree-rl-mjlab apply /app/deploy/patches/unitree_rl_mjlab-robomotion.patch
 
 ENV ROBOMOTION_PROMPTHMR_ROOT=/opt/prompt-hmr \
     ROBOMOTION_GMR_ROOT=/opt/gmr \
+    ROBOMOTION_TRAIN_ROOT=/opt/unitree-rl-mjlab \
     ROBOMOTION_PROMPTHMR_ENV=phmr_pt2.4 \
     ROBOMOTION_GMR_ENV=gmr \
+    ROBOMOTION_TRAIN_ENV=train \
     MUJOCO_GL=egl
 
 CMD ["npm", "run", "worker"]

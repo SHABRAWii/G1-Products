@@ -11,8 +11,14 @@ PHMR_DIR="${ROBOMOTION_PROMPTHMR_ROOT:-$SOURCE_ROOT/PromptHMR}"
 GMR_DIR="${ROBOMOTION_GMR_ROOT:-$SOURCE_ROOT/GMR}"
 PHMR_ENV="${ROBOMOTION_PROMPTHMR_ENV:-phmr_pt2.4}"
 GMR_ENV="${ROBOMOTION_GMR_ENV:-gmr}"
+TRAIN_ENV="${ROBOMOTION_TRAIN_ENV:-train}"
 PROMPTHMR_REF="${ROBOMOTION_PROMPTHMR_REF:-4f8915c5b9603344c56e95fadb9a01a23ba2272d}"
 GMR_REF="${ROBOMOTION_GMR_REF:-069b4fd48f440e813b2b4d69255c70f53e5f83fb}"
+# Latest genuine upstream commit on unitreerobotics/unitree_rl_mjlab's main
+# branch as of this pin (verified via `git fetch origin`), not any fork.
+TRAIN_REF="${ROBOMOTION_TRAIN_REF:-1425b15f73bd4095f0df53709d7c389c3eb9e790}"
+TRAIN_DIR="${ROBOMOTION_TRAIN_ROOT:-$SOURCE_ROOT/unitree_rl_mjlab}"
+TRAIN_PATCH="$PROJECT_ROOT/deploy/patches/unitree_rl_mjlab-robomotion.patch"
 LOG_DIR="$MODEL_ROOT/install-logs"
 CHECKPOINT_MARKER="$MODEL_CACHE/prompthmr-data/.robomotion-checkpoints-v1"
 CHECKSUM_MANIFEST="$MODEL_CACHE/prompthmr-data/.robomotion-checksums-v1.sha256"
@@ -138,6 +144,23 @@ clone_at_ref() {
 sync_sources() {
   clone_at_ref "GMR" "https://github.com/taeyoun811/GMR.git" "$GMR_DIR" "$GMR_REF"
   clone_at_ref "PromptHMR" "https://github.com/taeyoun811/PromptHMR.git" "$PHMR_DIR" "$PROMPTHMR_REF"
+  clone_at_ref "unitree_rl_mjlab" "https://github.com/unitreerobotics/unitree_rl_mjlab.git" "$TRAIN_DIR" "$TRAIN_REF"
+}
+
+# The patch adds a required setup.py dependency fix plus the best-checkpoint
+# feature (see the patch file's own header for details). Idempotent: detects
+# "already applied" (via a clean reverse-apply) versus a real mismatch, so
+# re-running the installer never fails or double-applies, and a genuine
+# upstream change to these files fails loudly instead of silently skipping
+# the feature.
+train_patch_applied() {
+  git -C "$TRAIN_DIR" apply --reverse --check "$TRAIN_PATCH" >/dev/null 2>&1
+}
+apply_train_patch() {
+  if train_patch_applied; then return 0; fi
+  git -C "$TRAIN_DIR" apply --check "$TRAIN_PATCH" 2>/dev/null \
+    || fail "The RoboMotion unitree_rl_mjlab patch ($TRAIN_PATCH) does not apply cleanly to $TRAIN_REF. unitree_rl_mjlab has likely changed upstream since this was pinned; regenerate the patch against the new commit rather than forcing it."
+  git -C "$TRAIN_DIR" apply "$TRAIN_PATCH"
 }
 
 conda_environment_exists() {
@@ -172,6 +195,19 @@ install_digital_twin_renderer() {
   # Keep the modern PyOpenGL installed with MuJoCo; pyrender's old strict pin is incompatible.
   conda run -n "$GMR_ENV" python -m pip install pyrender==0.1.45 --no-deps
 }
+
+install_train_base() {
+  if ! conda_environment_exists "$TRAIN_ENV"; then conda create -n "$TRAIN_ENV" python=3.11.9 -c conda-forge -y; fi
+  conda_environment_exists "$TRAIN_ENV" || fail "Conda did not create $TRAIN_ENV."
+  if ! conda run -n "$TRAIN_ENV" python -m pip --version >/dev/null 2>&1; then conda run -n "$TRAIN_ENV" python -m ensurepip --upgrade; fi
+}
+# Pinned to the exact CUDA build verified against this project's training
+# stage. mjlab's own bare `torch>=2.7.0` requirement has no default index, so
+# leaving this to a plain `pip install -e .` risks resolving a different
+# torch/CUDA build on a future install; pinning it explicitly first (same
+# pattern as install_pytorch below for PromptHMR) keeps it reproducible.
+install_train_pytorch() { conda run -n "$TRAIN_ENV" python -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu130; }
+install_unitree_rl_mjlab() { conda run -n "$TRAIN_ENV" python -m pip install -e "$TRAIN_DIR"; }
 
 install_prompthmr_base() {
   if ! conda_environment_exists "$PHMR_ENV"; then conda create -n "$PHMR_ENV" python=3.11.9 -c conda-forge -y; fi
@@ -306,7 +342,7 @@ download_body_support_assets() {
   fi
   body_support_assets_downloaded || fail "PromptHMR body-model support assets are incomplete after the public download attempt."
 }
-validate_installation() { ln -sfn "$PHMR_DIR/data/body_models/smplx" "$GMR_DIR/assets/body_models/smplx"; conda run -n "$GMR_ENV" python -c 'import general_motion_retargeting'; (cd "$PHMR_DIR" && conda run -n "$PHMR_ENV" python -c 'from pipeline.pipeline import Pipeline'); }
+validate_installation() { ln -sfn "$PHMR_DIR/data/body_models/smplx" "$GMR_DIR/assets/body_models/smplx"; conda run -n "$GMR_ENV" python -c 'import general_motion_retargeting'; (cd "$PHMR_DIR" && conda run -n "$PHMR_ENV" python -c 'from pipeline.pipeline import Pipeline'); conda run -n "$TRAIN_ENV" python -c 'import mjlab'; [[ -f "$TRAIN_DIR/scripts/train.py" ]] || fail "unitree_rl_mjlab source is incomplete."; }
 
 command -v git >/dev/null || fail "git is required."
 command -v conda >/dev/null || fail "Conda is required. Install Miniconda or Anaconda first."
@@ -320,6 +356,10 @@ run_stage "Synchronizing direct model sources" "Pinned PromptHMR and GMR upstrea
 run_stage "Preparing persistent model storage" "Models and checkpoints survive future installer runs" prepare_persistence
 if ! conda run -n "$GMR_ENV" python -c 'import general_motion_retargeting' >/dev/null 2>&1; then run_stage "Installing GMR" "Robot retargeting engine and its Python dependencies" install_gmr; else cached_stage "GMR" "Direct retargeting package import passed"; fi
 if ! conda run -n "$GMR_ENV" python -c 'import pyrender, trimesh; assert pyrender.__version__ == "0.1.45"; assert trimesh.__version__ == "4.10.0"' >/dev/null 2>&1; then run_stage "Installing digital-twin renderer" "Exact Unitree STL rendering for MP4 evidence" install_digital_twin_renderer; else cached_stage "digital-twin renderer" "Exact STL renderer imports and pinned versions passed"; fi
+if ! train_patch_applied; then run_stage "Applying RoboMotion training patch" "setup.py dependency fix plus best-checkpoint tracking, on top of the pinned commit" apply_train_patch; else cached_stage "RoboMotion training patch" "Patch already applied to the pinned checkout"; fi
+if conda_environment_exists "$TRAIN_ENV" && conda run -n "$TRAIN_ENV" python -m pip --version >/dev/null 2>&1; then cached_stage "training environment" "Python 3.11 and pip in $TRAIN_ENV"; else run_stage "Preparing training environment" "Python 3.11 and pip in $TRAIN_ENV" install_train_base; fi
+if ! conda run -n "$TRAIN_ENV" python -c 'import torch; assert torch.__version__.startswith("2.13.")' >/dev/null 2>&1; then run_stage "Installing PyTorch CUDA 13.0" "Large GPU package download; this can take several minutes" install_train_pytorch; else cached_stage "PyTorch CUDA 13.0" "Installed version and CUDA wheel contract passed"; fi
+if ! conda run -n "$TRAIN_ENV" python -c 'import mjlab' >/dev/null 2>&1; then run_stage "Installing unitree_rl_mjlab" "mjlab and its full dependency closure (verified: torch, rsl-rl-lib, wandb, tyro, tensorboard, trimesh, viser, and more)" install_unitree_rl_mjlab; else cached_stage "unitree_rl_mjlab" "Direct mjlab import passed"; fi
 if conda_environment_exists "$PHMR_ENV" && conda run -n "$PHMR_ENV" python -m pip --version >/dev/null 2>&1; then cached_stage "PromptHMR environment" "Python 3.11 and pip in $PHMR_ENV"; else run_stage "Preparing PromptHMR environment" "Python 3.11 and pip in $PHMR_ENV" install_prompthmr_base; fi
 if ! conda run -n "$PHMR_ENV" python -c 'import torch; assert torch.__version__.startswith("2.4.")' >/dev/null 2>&1; then run_stage "Installing PyTorch CUDA 12.1" "Large GPU package download; this can take several minutes" install_pytorch; else cached_stage "PyTorch CUDA 12.1" "Installed version and CUDA wheel contract passed"; fi
 if ! conda run -n "$PHMR_ENV" python -c 'import torch_scatter' >/dev/null 2>&1; then run_stage "Installing torch-scatter" "GPU geometry operator for PromptHMR" install_torch_scatter; else cached_stage "torch-scatter" "GPU geometry operator import passed"; fi
@@ -349,9 +389,11 @@ ENV_FILE="$MODEL_ROOT/worker-models.env"
 cat > "$ENV_FILE" <<EOF
 export ROBOMOTION_PROMPTHMR_ROOT='$PHMR_DIR'
 export ROBOMOTION_GMR_ROOT='$GMR_DIR'
+export ROBOMOTION_TRAIN_ROOT='$TRAIN_DIR'
 export ROBOMOTION_MODEL_CACHE='$MODEL_CACHE'
 export ROBOMOTION_PROMPTHMR_ENV='$PHMR_ENV'
 export ROBOMOTION_GMR_ENV='$GMR_ENV'
+export ROBOMOTION_TRAIN_ENV='$TRAIN_ENV'
 EOF
 chmod 600 "$ENV_FILE"
 if $INTERACTIVE; then printf '\033[2J\033[H'; fi

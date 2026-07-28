@@ -1,24 +1,47 @@
-# RoboMotion patch: best-checkpoint tracking for unitree_rl_mjlab
+# RoboMotion patch for unitree_rl_mjlab
 #
-# Applies cleanly on top of unitree_rl_mjlab commit:
-#   c54d3e9654463fb37259c526b99e7c4a7a7f024d
-# (upstream: https://github.com/unitreerobotics/unitree_rl_mjlab)
+# Applies cleanly on top of the latest genuine upstream commit (verified via
+# `git fetch origin` against https://github.com/unitreerobotics/unitree_rl_mjlab):
+#   1425b15f73bd4095f0df53709d7c389c3eb9e790
+#   ("Fix the warnings during rough-terrain training.")
 #
-# What it does: adds `--track-best`/`--best-checkpoint-metric` to
-# scripts/train.py and a best-checkpoint hook to
-# src/tasks/tracking/rl/runner.py's MotionTrackingOnPolicyRunner. Whenever
-# RSL-RL's rolling mean episode reward improves, a lightweight model_best.pt
-# checkpoint is written (with the best score stored as resume-safe metadata).
-# ONNX export intentionally stays on the existing periodic/final save
-# schedule rather than re-running on every improving iteration, since reward
-# can improve on nearly every early iteration and re-exporting ONNX each time
-# would repeat expensive work far more often than necessary.
+# Bundles two independent fixes/features, kept in one patch since both are
+# required for RoboMotion's training stage to work correctly:
+#
+# 1. setup.py dependency fix. Upstream's INSTALL_REQUIRES only lists
+#    mjlab==1.2.0 and mujoco-warp==3.5.0. mjlab itself transitively covers
+#    almost everything else needed (torch, rsl-rl-lib, wandb, tyro, tqdm,
+#    tensorboard, onnxscript, trimesh, viser, tensordict, torchrunx, mujoco,
+#    warp-lang -- verified by walking mjlab's full declared-dependency graph
+#    and diffing it against every package actually installed in a working
+#    environment: 119/131 packages accounted for, the remainder being pip/
+#    wheel/the package itself/CUDA runtime wheels bundled with torch).
+#    scipy is the one genuine gap: mjlab's own code
+#    (mjlab/terrains/heightfield_terrains.py, mjlab/terrains/utils.py)
+#    imports scipy directly at runtime, but scipy is only ever declared as an
+#    *optional* extra of mjlab's other dependencies (trimesh's "easy" extra,
+#    torchvision's "scipy" extra, mujoco's "sysid" extra) -- never a plain
+#    dependency of anything in the chain -- so a bare `pip install -e .`
+#    against upstream's real setup.py never installs it. This patch adds
+#    scipy explicitly (and mujoco/warp-lang for explicitness, though mjlab
+#    already covers those transitively).
+#
+# 2. Best-checkpoint tracking. Adds `--track-best`/`--best-checkpoint-metric`
+#    to scripts/train.py and a best-checkpoint hook to
+#    src/tasks/tracking/rl/runner.py's MotionTrackingOnPolicyRunner. Whenever
+#    RSL-RL's rolling mean episode reward improves, a lightweight
+#    model_best.pt checkpoint is written (with the best score stored as
+#    resume-safe metadata). ONNX export intentionally stays on the existing
+#    periodic/final save schedule rather than re-running on every improving
+#    iteration, since reward can improve on nearly every early iteration and
+#    re-exporting ONNX each time would repeat expensive work far more often
+#    than necessary.
 #
 # Apply with (from the unitree_rl_mjlab checkout root, after cloning the
 # exact commit above and before installing dependencies):
 #   git apply /path/to/this/file
 #
-# If this fails to apply, unitree_rl_mjlab's train.py or
+# If this fails to apply, unitree_rl_mjlab's setup.py, scripts/train.py, or
 # src/tasks/tracking/rl/runner.py have likely changed upstream since the
 # base commit above; regenerate this patch against the new base rather than
 # forcing it.
@@ -62,6 +85,21 @@ index f727e28..16c1d04 100644
    env_cfg = asdict(cfg.env)
 
    runner_cls = load_runner_cls(task_id)
+diff --git a/setup.py b/setup.py
+index 45576db..b32a04e 100755
+--- a/setup.py
++++ b/setup.py
+@@ -5,7 +5,10 @@ from setuptools import setup, find_packages
+ # Minimum dependencies required prior to installation
+ INSTALL_REQUIRES = [
+     "mjlab==1.2.0",
++    "mujoco==3.5.0",
+     "mujoco-warp==3.5.0",
++    "scipy",
++    "warp-lang==1.12.0",
+ ]
+
+ # Installation operation
 diff --git a/src/tasks/tracking/rl/runner.py b/src/tasks/tracking/rl/runner.py
 index 7a81ed1..245f698 100644
 --- a/src/tasks/tracking/rl/runner.py
