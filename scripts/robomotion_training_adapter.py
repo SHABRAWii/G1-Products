@@ -102,6 +102,10 @@ def main() -> None:
         "num_frames": int(rows.shape[0]),
         "robot_type": str(motion.get("robot_type", "unitree_g1")),
     }
+    # Written alongside stdout so a caller that only captures the CSV (e.g. a
+    # subprocess wrapper that doesn't parse stdout) can still recover fps/frame
+    # count without re-opening the source pickle.
+    destination.with_suffix(".json").write_text(json.dumps(summary), encoding="utf-8")
     print(json.dumps(summary), flush=True)
 
 
