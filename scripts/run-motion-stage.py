@@ -58,7 +58,7 @@ def latest_checkpoint(run_dir: Path) -> Path:
     return max(numbered, key=lambda pair: pair[0])[1]
 
 
-def run_training_stage(args: argparse.Namespace, source: Path, work_dir: Path, scripts: Path) -> list[dict[str, str]]:
+def run_training_stage(args: argparse.Namespace, source: Path, work_dir: Path, scripts: Path) -> tuple[list[dict[str, str]], dict[str, object]]:
     training_root = Path(args.training_root).expanduser().resolve()
     require(training_root / "scripts" / "train.py", "unitree_rl_mjlab source is incomplete. Set ROBOMOTION_TRAIN_ROOT.")
     robot = TRAINING_ROBOTS.get(args.robot)
@@ -111,7 +111,19 @@ def run_training_stage(args: argparse.Namespace, source: Path, work_dir: Path, s
     onnx_policy = next((candidate for candidate in (run_dir / "exported" / "policy.onnx", run_dir / "policy.onnx") if candidate.exists()), None)
     if onnx_policy is not None:
         artifacts.append(output(onnx_policy, "POLICY_CHECKPOINT", "policy.checkpoint.onnx/v1", "EVIDENCE", "application/octet-stream"))
-    return artifacts
+
+    # Reported back to the dashboard so it can record the exact recipe that
+    # produced this checkpoint, instead of guessing at the CLI defaults used.
+    training_config = {
+        "algorithm": "rsl-rl-ppo",
+        "task": robot["task"],
+        "robot": robot["mjlab_robot"],
+        "numEnvs": args.training_num_envs,
+        "maxIterations": args.training_max_iterations,
+        "outputFps": args.training_output_fps,
+        "experimentName": experiment_name,
+    }
+    return artifacts, training_config
 
 
 def main() -> None:
@@ -191,7 +203,7 @@ def main() -> None:
         manifest["summary"] = "RoboMotion retargeted the selected SMPL-X track to Unitree G1 29-DoF motion and rendered matching digital-twin MP4 evidence."
 
     elif args.stage == "training":
-        manifest["outputs"] = run_training_stage(args, source, work_dir, scripts)
+        manifest["outputs"], manifest["training"] = run_training_stage(args, source, work_dir, scripts)
         manifest["summary"] = "RoboMotion converted the retargeted motion to mjlab's training format and ran unitree_rl_mjlab motion-imitation training to a policy checkpoint."
 
     else:

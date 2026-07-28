@@ -7,8 +7,11 @@ The dashboard sends real pre-training work to a separate worker process. The wor
 - Pose extraction: source video → PromptHMR → `smplx.npz`; stores the direct PromptHMR `results.pkl` evidence.
 - Robot retargeting: reviewed SMPL-X → GMR → Unitree G1 29-DoF `robot_motion.pkl`.
 - Visualization: GMR robot motion → official G1 mesh transforms → interactive digital twin + matching headless MP4 evidence.
+- Training: GMR robot motion → mjlab CSV/npz conversion → unitree_rl_mjlab motion-imitation training → policy checkpoint (`.pt`, plus `policy.onnx` when exported). Records a `TrainingRecipe`/`TrainingRun` on success; a failure is still fully visible via the normal stage/attempt/event trail.
 
 ## Required model environments
+
+Each model root below is validated independently — a worker only needs the roots/envs for the stages it actually serves. A training-only worker, for example, only needs `ROBOMOTION_TRAIN_ROOT`/`ROBOMOTION_TRAIN_ENV`; it does not need PromptHMR or GMR installed to report itself ready.
 
 Set these values in the terminal that starts the worker:
 
