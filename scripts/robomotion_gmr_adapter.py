@@ -11,6 +11,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from smplx_motion import validate_track
+from g1_motion import contact_aware_grounding, load_g1_model, validate_qpos
+
 
 def load_smplx_for_gmr(smplx_file: Path, model_dir: Path):
     """Load the RoboMotion SMPL-X artifact against the installed body model.
@@ -40,15 +43,42 @@ def load_smplx_for_gmr(smplx_file: Path, model_dir: Path):
     expression = np.asarray(data["expression"], dtype=np.float32) if "expression" in data else np.zeros((frames, 10), dtype=np.float32)
     if expression.ndim == 1:
         expression = np.broadcast_to(expression, (frames, len(expression))).copy()
-    if expression.shape != (frames, 10):
-        raise RuntimeError(f"Expected SMPL-X expression shape ({frames}, 10), received {expression.shape}.")
+    optional = {
+        "left_hand_pose": (45, np.zeros((frames, 45), dtype=np.float32)),
+        "right_hand_pose": (45, np.zeros((frames, 45), dtype=np.float32)),
+        "jaw_pose": (3, np.zeros((frames, 3), dtype=np.float32)),
+        "leye_pose": (3, np.zeros((frames, 3), dtype=np.float32)),
+        "reye_pose": (3, np.zeros((frames, 3), dtype=np.float32)),
+    }
+    resolved = {
+        name: np.asarray(data[name], dtype=np.float32) if name in data else fallback
+        for name, (_width, fallback) in optional.items()
+    }
+    root_orient = np.asarray(data["root_orient"], dtype=np.float32)
+    body_pose = np.asarray(data["pose_body"], dtype=np.float32)
+    transl = np.asarray(data["trans"], dtype=np.float32)
+    validate_track(
+        global_orient=root_orient,
+        body_pose=body_pose,
+        transl=transl,
+        betas=betas,
+        left_hand_pose=resolved["left_hand_pose"],
+        right_hand_pose=resolved["right_hand_pose"],
+        jaw_pose=resolved["jaw_pose"],
+        leye_pose=resolved["leye_pose"],
+        reye_pose=resolved["reye_pose"],
+        expression=expression,
+    )
     output = body_model(
         betas=torch.from_numpy(betas)[None].repeat(frames, 1),
-        global_orient=torch.from_numpy(np.asarray(data["root_orient"], dtype=np.float32)),
-        body_pose=torch.from_numpy(np.asarray(data["pose_body"], dtype=np.float32)),
-        transl=torch.from_numpy(np.asarray(data["trans"], dtype=np.float32)),
-        left_hand_pose=torch.zeros(frames, 45), right_hand_pose=torch.zeros(frames, 45),
-        jaw_pose=torch.zeros(frames, 3), leye_pose=torch.zeros(frames, 3), reye_pose=torch.zeros(frames, 3),
+        global_orient=torch.from_numpy(root_orient),
+        body_pose=torch.from_numpy(body_pose),
+        transl=torch.from_numpy(transl),
+        left_hand_pose=torch.from_numpy(resolved["left_hand_pose"]),
+        right_hand_pose=torch.from_numpy(resolved["right_hand_pose"]),
+        jaw_pose=torch.from_numpy(resolved["jaw_pose"]),
+        leye_pose=torch.from_numpy(resolved["leye_pose"]),
+        reye_pose=torch.from_numpy(resolved["reye_pose"]),
         expression=torch.from_numpy(expression), return_full_pose=True,
     )
     human_height = float(1.66 + 0.1 * betas[0])
@@ -95,8 +125,16 @@ def main() -> None:
         if index % 10 == 0 or index == len(frames):
             print(f"GMR: retargeted {index}/{len(frames)} frames", flush=True)
 
-    qpos = np.asarray(configuration)
+    mujoco_model = load_g1_model(retargeter.xml_file)
+    qpos = validate_qpos(mujoco_model, np.asarray(configuration))
+    qpos, ground_before, ground_after, ground_correction = contact_aware_grounding(
+        mujoco_model,
+        qpos,
+        float(fps),
+    )
     root_position = qpos[:, :3].astype(np.float32)
+    # Persist xyzw for RoboMotion/GMR compatibility. MuJoCo receives wxyz when
+    # the trajectory is loaded into its floating-base free joint.
     root_rotation = qpos[:, [4, 5, 6, 3]].astype(np.float32)
     joints = qpos[:, 7:].astype(np.float32)
     kinematics = KinematicsModel(retargeter.xml_file, device=torch.device("cpu"))
@@ -104,16 +142,30 @@ def main() -> None:
     identity = torch.zeros((len(qpos), 4))
     identity[:, -1] = 1.0
     local_body_position, _ = kinematics.forward_kinematics(zeros, identity, torch.from_numpy(joints))
-    world_bodies, _ = kinematics.forward_kinematics(torch.from_numpy(root_position), torch.from_numpy(root_rotation), torch.from_numpy(joints))
-    root_position[:, 2] -= float(torch.min(world_bodies[..., 2]))
     motion = {
         "fps": float(fps), "robot_type": args.robot, "num_frames": int(len(qpos)), "human_height": float(human_height),
         "root_pos": root_position, "root_rot": root_rotation, "dof_pos": joints,
         "local_body_pos": local_body_position.numpy().astype(np.float32), "link_body_list": kinematics.body_names,
+        # The durable pickle keeps GMR's xyzw quaternion convention. Consumers
+        # must reorder it to MuJoCo's wxyz free-joint layout before mj_forward.
+        "qpos_layout": "root_xyz-root_quaternion_xyzw-29_hinge_radians",
+        "joint_names": list(ground_after["jointNames"]),
+        "ground_diagnostics": {
+            "before": ground_before["summary"],
+            "after": ground_after["summary"],
+            "contactDetection": ground_after["contactDetection"],
+            "groundingMethod": ground_after["groundingMethod"],
+            "rootHeightCorrection": ground_correction.astype(np.float32),
+        },
     }
     with destination.open("wb") as file:
         pickle.dump(motion, file, protocol=pickle.HIGHEST_PROTOCOL)
-    print(f"GMR: saved {destination.name}; {joints.shape[1]} DoF; {len(qpos)} frames", flush=True)
+    print(
+        f"GMR: saved {destination.name}; {joints.shape[1]} DoF; {len(qpos)} frames; "
+        f"penetration {ground_before['summary']['maximumPenetration'] * 1000:.1f} mm -> "
+        f"{ground_after['summary']['maximumPenetration'] * 1000:.3f} mm",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

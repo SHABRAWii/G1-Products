@@ -15,6 +15,8 @@ import joblib
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from smplx_motion import split_prompthmr_smplx_pose, validate_track
+
 
 PROMPTHMR_TO_ROBOT = np.array([[0, 0, -1], [-1, 0, 0], [0, 1, 0]], dtype=np.float32)
 
@@ -97,30 +99,73 @@ def convert(results: dict, video: Path, destination: Path) -> dict:
     track_id, person = best_track(results.get("people", {}))
     world = person.get("smplx_world") or {}
     poses = np.asarray(world.get("pose", []), dtype=np.float32)
-    if poses.size == 0 or poses.size % 165:
+    if poses.size == 0:
         raise RuntimeError("PromptHMR returned no usable world-coordinate SMPL-X pose track.")
-    poses = poses.reshape(-1, 55, 3)
-    frames = poses.shape[0]
+    parameters = split_prompthmr_smplx_pose(poses)
+    frames = parameters.global_orient.shape[0]
     translation = np.asarray(world.get("trans", np.zeros((frames, 3))), dtype=np.float32).reshape(frames, 3)
     shape = np.asarray(world.get("shape", np.zeros((frames, 10))), dtype=np.float32)
     if shape.ndim == 1:
         shape = shape.reshape(1, -1)
+    if shape.shape != (frames, 10):
+        raise RuntimeError(
+            f"PromptHMR SMPL-X shape must have shape ({frames}, 10); received {shape.shape}."
+        )
 
     root = np.empty((frames, 3), dtype=np.float32)
-    for index, axis_angle in enumerate(poses[:, 0]):
+    for index, axis_angle in enumerate(parameters.global_orient):
         original_rotation = Rotation.from_rotvec(axis_angle).as_matrix()
         root[index] = Rotation.from_matrix(PROMPTHMR_TO_ROBOT @ original_rotation).as_rotvec()
 
+    converted_translation = (translation @ PROMPTHMR_TO_ROBOT.T).astype(np.float32)
+    betas = shape.mean(axis=0).astype(np.float32)
+    expression = np.zeros((frames, 10), dtype=np.float32)
+    validate_track(
+        global_orient=root,
+        body_pose=parameters.body_pose,
+        transl=converted_translation,
+        betas=betas,
+        left_hand_pose=parameters.left_hand_pose,
+        right_hand_pose=parameters.right_hand_pose,
+        jaw_pose=parameters.jaw_pose,
+        leye_pose=parameters.leye_pose,
+        reye_pose=parameters.reye_pose,
+        expression=expression,
+    )
     np.savez(
         destination,
         root_orient=root,
-        pose_body=poses[:, 1:22].reshape(frames, 63).astype(np.float32),
-        betas=shape.mean(axis=0).astype(np.float32),
-        trans=(translation @ PROMPTHMR_TO_ROBOT.T).astype(np.float32),
+        pose_body=parameters.body_pose.astype(np.float32),
+        betas=betas,
+        trans=converted_translation,
+        left_hand_pose=parameters.left_hand_pose.astype(np.float32),
+        right_hand_pose=parameters.right_hand_pose.astype(np.float32),
+        jaw_pose=parameters.jaw_pose.astype(np.float32),
+        leye_pose=parameters.leye_pose.astype(np.float32),
+        reye_pose=parameters.reye_pose.astype(np.float32),
+        expression=expression,
         gender=np.array("neutral"),
         mocap_frame_rate=np.array(video_fps(video), dtype=np.float32),
     )
-    return {"track": str(track_id), "frames": frames, "fps": video_fps(video)}
+    return {
+        "track": str(track_id),
+        "frames": frames,
+        "fps": video_fps(video),
+        "bodyModel": "smplx",
+        "rotationRepresentation": "axis-angle-radians",
+        "parameterShapes": {
+            "global_orient": [frames, 3],
+            "body_pose": [frames, 63],
+            "transl": [frames, 3],
+            "betas": [10],
+            "left_hand_pose": [frames, 45],
+            "right_hand_pose": [frames, 45],
+            "jaw_pose": [frames, 3],
+            "leye_pose": [frames, 3],
+            "reye_pose": [frames, 3],
+            "expression": [frames, 10],
+        },
+    }
 
 
 def main() -> None:

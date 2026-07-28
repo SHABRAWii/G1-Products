@@ -64,7 +64,6 @@ def main() -> None:
         smplx = work_dir / "smplx.npz"
         results = work_dir / "results.pkl"
         skeleton_preview = work_dir / "pose-skeleton-preview.mp4"
-        pose_3d_preview = work_dir / "pose-3d-preview.mp4"
         pose_3d_scene = work_dir / "pose-3d-scene.json"
         run(conda_python(args.prompthmr_env, scripts / "robomotion_pose_adapter.py", [
             "--prompt-hmr-root", str(prompt_root), "--video", str(video), "--output", str(smplx), "--results", str(results),
@@ -80,25 +79,20 @@ def main() -> None:
             ]))
             require(skeleton_preview, "The pose skeleton renderer completed without an MP4 preview.")
             artifacts.append(output(skeleton_preview, "VISUALIZATION", "visualization.pose-skeleton/v1", "PREVIEW", "video/mp4"))
-        # This is deliberately separate from the 2D tracking overlay above:
-        # the dashboard retains both the image-space detector evidence and a
-        # projected view of PromptHMR's actual 3D SMPL-X motion.
-        run(conda_python(args.gmr_env, scripts / "render-pose-3d.py", [
-            "--smplx", str(smplx), "--model-dir", str(Path(args.gmr_root).expanduser().resolve() / "assets" / "body_models"), "--output", str(pose_3d_preview), "--scene-output", str(pose_3d_scene),
+        run(conda_python(args.gmr_env, scripts / "build-pose-scene.py", [
+            "--smplx", str(smplx), "--model-dir", str(Path(args.gmr_root).expanduser().resolve() / "assets" / "body_models"), "--output", str(pose_3d_scene),
         ]))
-        require(pose_3d_preview, "The 3D SMPL-X renderer completed without an MP4 preview.")
-        require(pose_3d_scene, "The 3D SMPL-X renderer completed without interactive scene data.")
-        artifacts.append(output(pose_3d_preview, "VISUALIZATION", "visualization.pose-3d/v1", "PREVIEW", "video/mp4"))
-        artifacts.append(output(pose_3d_scene, "VISUALIZATION", "visualization.pose-3d-scene/v1", "EVIDENCE", "application/json"))
+        require(pose_3d_scene, "The SMPL-X scene builder completed without interactive scene data.")
+        artifacts.append(output(pose_3d_scene, "VISUALIZATION", "visualization.pose-3d-scene/v2", "EVIDENCE", "application/json"))
         manifest["outputs"] = artifacts
-        manifest["summary"] = "RoboMotion converted the PromptHMR track to SMPL-X pose data and rendered both 2D tracking and 3D motion previews."
+        manifest["summary"] = "RoboMotion converted the PromptHMR track to SMPL-X pose data, retained 2D tracking evidence, and built the interactive 3D motion scene."
 
     elif args.stage == "robot_retargeting":
         gmr_root = Path(args.gmr_root).expanduser().resolve()
         require(gmr_root / "general_motion_retargeting", "GMR source is incomplete. Set ROBOMOTION_GMR_ROOT.")
         motion = work_dir / "robot_motion.pkl"
-        robot_preview = work_dir / "unitree_g1_retarget-preview.mp4"
-        robot_scene = work_dir / "unitree_g1_retarget-scene.json"
+        robot_preview = work_dir / "unitree_g1_digital-twin.mp4"
+        robot_scene = work_dir / "unitree_g1_digital-twin-scene.json"
         run(conda_python(args.gmr_env, scripts / "robomotion_gmr_adapter.py", [
             "--gmr-root", str(gmr_root), "--smplx", str(source), "--robot", args.robot, "--output", str(motion),
         ]))
@@ -108,21 +102,21 @@ def main() -> None:
         require(robot_scene, "GMR completed without interactive robot scene data.")
         manifest["outputs"] = [
             output(motion, "MOTION_ROBOT", "motion.robot.unitree-g1-29dof/v1", "OUTPUT", "application/octet-stream"),
-            output(robot_preview, "VISUALIZATION", "visualization.robot-retarget/v1", "PREVIEW", "video/mp4"),
-            output(robot_scene, "VISUALIZATION", "visualization.robot-3d-scene/v1", "EVIDENCE", "application/json"),
+            output(robot_preview, "VISUALIZATION", "visualization.robot-digital-twin/v1", "PREVIEW", "video/mp4"),
+            output(robot_scene, "VISUALIZATION", "visualization.robot-3d-scene/v4", "EVIDENCE", "application/json"),
         ]
-        manifest["summary"] = "RoboMotion retargeted the selected SMPL-X track to Unitree G1 29-DoF motion and rendered a kinematic preview."
+        manifest["summary"] = "RoboMotion retargeted the selected SMPL-X track to Unitree G1 29-DoF motion and rendered matching digital-twin MP4 evidence."
 
     else:
         motion = work_dir / "robot_motion.pkl"
         shutil.copy2(source, motion)
-        video = work_dir / "unitree_g1_preview.mp4"
-        robot_scene = work_dir / "unitree_g1_scene.json"
+        video = work_dir / "unitree_g1_digital-twin.mp4"
+        robot_scene = work_dir / "unitree_g1_digital-twin-scene.json"
         run(conda_python(args.gmr_env, scripts / "render-robot-motion.py", ["--motion", str(motion), "--robot", args.robot, "--output", str(video), "--scene-output", str(robot_scene)]))
         require(video, "The RoboMotion renderer completed without a preview video.")
         require(robot_scene, "The RoboMotion renderer completed without interactive robot scene data.")
-        manifest["outputs"] = [output(video, "VISUALIZATION", "visualization.robot-preview/v1", "OUTPUT", "video/mp4"), output(robot_scene, "VISUALIZATION", "visualization.robot-3d-scene/v1", "EVIDENCE", "application/json")]
-        manifest["summary"] = "RoboMotion rendered the Unitree robot-motion preview."
+        manifest["outputs"] = [output(video, "VISUALIZATION", "visualization.robot-digital-twin/v1", "OUTPUT", "video/mp4"), output(robot_scene, "VISUALIZATION", "visualization.robot-3d-scene/v4", "EVIDENCE", "application/json")]
+        manifest["summary"] = "RoboMotion rendered the Unitree G1 digital-twin motion preview."
 
     Path(args.manifest).write_text(json.dumps(manifest), encoding="utf-8")
     print(json.dumps(manifest), flush=True)
