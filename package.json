@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test:motion": "tsx --test tests/motion-geometry.test.ts tests/motion-playback.test.ts && python3 -m unittest tests/test_smplx_motion.py && bash -lc 'source .robomotion/worker-models.env && conda run --no-capture-output -n \"$ROBOMOTION_GMR_ENV\" python -m unittest tests/test_g1_motion.py tests/test_digital_twin_render.py'",
+    "test:motion": "tsx --test tests/motion-geometry.test.ts tests/motion-playback.test.ts && python3 -m unittest tests/test_smplx_motion.py && bash -lc '[ -f .robomotion/worker-models.env ] && source .robomotion/worker-models.env; conda run --no-capture-output -n \"${ROBOMOTION_GMR_ENV:-gmr}\" python -m unittest tests/test_g1_motion.py tests/test_digital_twin_render.py tests/test_training_adapter.py'",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
