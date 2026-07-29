@@ -8,9 +8,10 @@ import { getArtifactBytes, putArtifact } from "@/lib/object-storage";
 import { completeStage, dispatchNextStage, failStage } from "@/lib/orchestration";
 
 type WorkerOutput = { path: string; assetType: keyof typeof AssetType; schemaVersion: string; role: keyof typeof StageArtifactRole; contentType: string };
-type WorkerManifest = { summary?: string; outputs: WorkerOutput[] };
+type WorkerTrainingConfig = { algorithm: string; task: string; robot: string; numEnvs: number; maxIterations: number; outputFps: number; experimentName: string };
+type WorkerManifest = { summary?: string; outputs: WorkerOutput[]; training?: WorkerTrainingConfig };
 
-const executableStages = new Set<PrismaPipelineStage>([PrismaPipelineStage.POSE_EXTRACTION, PrismaPipelineStage.ROBOT_RETARGETING, PrismaPipelineStage.VISUALIZATION]);
+const executableStages = new Set<PrismaPipelineStage>([PrismaPipelineStage.POSE_EXTRACTION, PrismaPipelineStage.ROBOT_RETARGETING, PrismaPipelineStage.VISUALIZATION, PrismaPipelineStage.TRAINING]);
 
 function run(command: string, args: string[], onLog: (line: string) => void) {
   return new Promise<void>((resolve, reject) => {
@@ -21,6 +22,39 @@ function run(command: string, args: string[], onLog: (line: string) => void) {
     child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); emit(chunk); });
     child.on("error", reject);
     child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`Worker bridge exited with code ${code}. ${stderr.slice(-1000)}`)));
+  });
+}
+
+function slugify(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-+|-+$)/g, "");
+}
+
+// Records the concrete mjlab recipe (task + overrides) that produced a
+// checkpoint, and the TrainingRun it produced. Only called on a successful
+// training stage: on failure there is no manifest to report a real recipe
+// from, and the existing JobStage/StageAttempt/JobEvent trail already covers
+// failure visibility without a TrainingRun standing in for it.
+async function recordTrainingRun(input: {
+  workspaceId: string;
+  jobId: string;
+  jobName: string;
+  training: WorkerTrainingConfig;
+  outputs: { assetVersionId: string; role: keyof typeof StageArtifactRole }[];
+  manifestOutputs: WorkerOutput[];
+}) {
+  const recipeSlug = slugify(input.training.task);
+  const recipe = await prisma.trainingRecipe.upsert({
+    where: { workspaceId_slug: { workspaceId: input.workspaceId, slug: recipeSlug } },
+    update: { config: input.training },
+    create: { workspaceId: input.workspaceId, slug: recipeSlug, name: input.training.task, algorithm: input.training.algorithm, config: input.training },
+  });
+  const checkpointIndex = input.manifestOutputs.findIndex((candidate) => candidate.role === "OUTPUT");
+  const checkpointAssetVersionId = checkpointIndex >= 0 ? input.outputs[checkpointIndex]?.assetVersionId : undefined;
+  const metrics = { checkpointAssetVersionId, ...input.training };
+  await prisma.trainingRun.upsert({
+    where: { jobId: input.jobId },
+    update: { recipeId: recipe.id, status: "SUCCEEDED", endedAt: new Date(), metrics },
+    create: { workspaceId: input.workspaceId, jobId: input.jobId, recipeId: recipe.id, name: `${input.jobName} · training`, status: "SUCCEEDED", startedAt: new Date(), endedAt: new Date(), metrics },
   });
 }
 
@@ -63,8 +97,11 @@ async function executeStage(stageId: string) {
     const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as WorkerManifest;
     const outputs = await Promise.all(manifest.outputs.map((output) => storeOutput({ workspaceId: stage.job.workspaceId, jobId: stage.jobId, stage: stage.stage, output })));
     const completion = await completeStage(stage.jobId, stage.id, { worker: "local-pipeline-worker", summary: manifest.summary ?? "Stage completed.", logs, outputCount: outputs.length }, outputs);
+    if (stage.stage === PrismaPipelineStage.TRAINING && manifest.training) {
+      await recordTrainingRun({ workspaceId: stage.job.workspaceId, jobId: stage.jobId, jobName: stage.job.name, training: manifest.training, outputs, manifestOutputs: manifest.outputs });
+    }
     // Keep the pipeline moving after an approved review.  Do not auto-dispatch
-    // future non-worker stages (training/evaluation/simulation), because they
+    // future non-worker stages (evaluation/simulation), because they
     // intentionally do not have a local implementation yet.
     if (completion.state === "ready" && completion.nextStage && executableStages.has(completion.nextStage.stage)) {
       try {

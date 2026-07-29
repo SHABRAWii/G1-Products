@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       if (!input) return NextResponse.json({ error: "inputAssetVersionId was not found in this workspace." }, { status: 400 });
       if (input.approvalStatus !== "APPROVED") return NextResponse.json({ error: "The selected asset version must be approved before creating a job." }, { status: 400 });
       const acceptedTypes: Record<string, string[]> = {
-        pose_extraction: ["VIDEO_SOURCE", "VIDEO_GENERATED"], pose_review: ["POSE_SMPLX", "POSE_REVIEWED"], robot_retargeting: ["POSE_SMPLX", "POSE_REVIEWED"], visualization: ["POSE_SMPLX", "POSE_REVIEWED", "MOTION_ROBOT"],
+        pose_extraction: ["VIDEO_SOURCE", "VIDEO_GENERATED"], pose_review: ["POSE_SMPLX", "POSE_REVIEWED"], robot_retargeting: ["POSE_SMPLX", "POSE_REVIEWED"], visualization: ["POSE_SMPLX", "POSE_REVIEWED", "MOTION_ROBOT"], training: ["MOTION_ROBOT"],
       };
       if (!acceptedTypes[body.startStage]?.includes(input.asset.type)) return NextResponse.json({ error: `The selected ${input.asset.type} asset is not compatible with ${body.startStage}.` }, { status: 400 });
     }

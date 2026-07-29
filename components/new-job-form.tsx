@@ -10,6 +10,7 @@ const entryPoints: { value: PipelineStage; description: string }[] = [
   { value: "pose_review", description: "Start from extracted SMPL-X pose data." },
   { value: "robot_retargeting", description: "Start from an approved human-pose artifact." },
   { value: "visualization", description: "Render an approved pose or robot-motion artifact." },
+  { value: "training", description: "Start from an approved robot-motion artifact." },
 ];
 
 interface Preflight { estimateMinor: number; estimateMinutes: number; storageBytes: number; requiresPoseReview: boolean; }
@@ -22,7 +23,7 @@ export function NewJobForm() {
   const [preflight, setPreflight] = useState<Preflight | null>(null);
   const [preflightError, setPreflightError] = useState<string | null>(null);
   const [submission, setSubmission] = useState<{ type: "success" | "error"; message: string } | null>(null);
-  const availableEndStages = useMemo(() => pipelineStages.slice(pipelineStages.indexOf(startStage), pipelineStages.indexOf("training")), [startStage]);
+  const availableEndStages = useMemo(() => pipelineStages.slice(pipelineStages.indexOf(startStage), pipelineStages.indexOf("training") + 1), [startStage]);
   const selectedStages = pipelineStages.slice(pipelineStages.indexOf(startStage), pipelineStages.indexOf(endStage) + 1);
 
   useEffect(() => {

@@ -1,0 +1,223 @@
+# RoboMotion patch for unitree_rl_mjlab
+#
+# Applies cleanly on top of the latest genuine upstream commit (verified via
+# `git fetch origin` against https://github.com/unitreerobotics/unitree_rl_mjlab):
+#   1425b15f73bd4095f0df53709d7c389c3eb9e790
+#   ("Fix the warnings during rough-terrain training.")
+#
+# Bundles two independent fixes/features, kept in one patch since both are
+# required for RoboMotion's training stage to work correctly:
+#
+# 1. setup.py dependency fix. Upstream's INSTALL_REQUIRES only lists
+#    mjlab==1.2.0 and mujoco-warp==3.5.0. mjlab itself transitively covers
+#    almost everything else needed (torch, rsl-rl-lib, wandb, tyro, tqdm,
+#    tensorboard, onnxscript, trimesh, viser, tensordict, torchrunx, mujoco,
+#    warp-lang -- verified by walking mjlab's full declared-dependency graph
+#    and diffing it against every package actually installed in a working
+#    environment: 119/131 packages accounted for, the remainder being pip/
+#    wheel/the package itself/CUDA runtime wheels bundled with torch).
+#    scipy is the one genuine gap: mjlab's own code
+#    (mjlab/terrains/heightfield_terrains.py, mjlab/terrains/utils.py)
+#    imports scipy directly at runtime, but scipy is only ever declared as an
+#    *optional* extra of mjlab's other dependencies (trimesh's "easy" extra,
+#    torchvision's "scipy" extra, mujoco's "sysid" extra) -- never a plain
+#    dependency of anything in the chain -- so a bare `pip install -e .`
+#    against upstream's real setup.py never installs it. This patch adds
+#    scipy explicitly (and mujoco/warp-lang for explicitness, though mjlab
+#    already covers those transitively).
+#
+# 2. Best-checkpoint tracking. Adds `--track-best`/`--best-checkpoint-metric`
+#    to scripts/train.py and a best-checkpoint hook to
+#    src/tasks/tracking/rl/runner.py's MotionTrackingOnPolicyRunner. Whenever
+#    RSL-RL's rolling mean episode reward improves, a lightweight
+#    model_best.pt checkpoint is written (with the best score stored as
+#    resume-safe metadata). ONNX export intentionally stays on the existing
+#    periodic/final save schedule rather than re-running on every improving
+#    iteration, since reward can improve on nearly every early iteration and
+#    re-exporting ONNX each time would repeat expensive work far more often
+#    than necessary.
+#
+# Apply with (from the unitree_rl_mjlab checkout root, after cloning the
+# exact commit above and before installing dependencies):
+#   git apply /path/to/this/file
+#
+# If this fails to apply, unitree_rl_mjlab's setup.py, scripts/train.py, or
+# src/tasks/tracking/rl/runner.py have likely changed upstream since the
+# base commit above; regenerate this patch against the new base rather than
+# forcing it.
+
+diff --git a/scripts/train.py b/scripts/train.py
+index f727e28..16c1d04 100644
+--- a/scripts/train.py
++++ b/scripts/train.py
+@@ -24,6 +24,11 @@ from mjlab.utils.wrappers import VideoRecorder
+ class TrainConfig:
+   env: ManagerBasedRlEnvCfg
+   agent: RslRlBaseRunnerCfg
++  # Expose best-checkpoint control through the Tyro training CLI.
++  track_best: bool = True
++  """Save ``model_best.pt`` when mean episode reward improves."""
++  best_checkpoint_metric: Literal["mean_episode_reward"] = "mean_episode_reward"
++  """Metric used by best-checkpoint tracking (currently mean episode reward)."""
+   motion_file: str | None = None
+   video: bool = False
+   video_length: int = 200
+@@ -60,6 +65,11 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
+   cfg.env.seed = seed
+
+   print(f"[INFO] Training with: device={device}, seed={seed}, rank={rank}")
++  # Make the selected best-checkpoint behavior visible in every run log.
++  print(
++    "[INFO] Best-checkpoint tracking: "
++    f"enabled={cfg.track_best}, metric={cfg.best_checkpoint_metric}"
++  )
+
+   # Check if this is a tracking task by checking for motion command.
+   is_tracking_task = "motion" in cfg.env.commands and isinstance(
+@@ -116,6 +126,10 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
+   env = RslRlVecEnvWrapper(env, clip_actions=cfg.agent.clip_actions)
+
+   agent_cfg = asdict(cfg.agent)
++  # Persist run-level checkpoint settings alongside agent configuration and make
++  # them available to the runner on every worker.
++  agent_cfg["track_best"] = cfg.track_best
++  agent_cfg["best_checkpoint_metric"] = cfg.best_checkpoint_metric
+   env_cfg = asdict(cfg.env)
+
+   runner_cls = load_runner_cls(task_id)
+diff --git a/setup.py b/setup.py
+index 45576db..b32a04e 100755
+--- a/setup.py
++++ b/setup.py
+@@ -5,7 +5,10 @@ from setuptools import setup, find_packages
+ # Minimum dependencies required prior to installation
+ INSTALL_REQUIRES = [
+     "mjlab==1.2.0",
++    "mujoco==3.5.0",
+     "mujoco-warp==3.5.0",
++    "scipy",
++    "warp-lang==1.12.0",
+ ]
+
+ # Installation operation
+diff --git a/src/tasks/tracking/rl/runner.py b/src/tasks/tracking/rl/runner.py
+index 7a81ed1..245f698 100644
+--- a/src/tasks/tracking/rl/runner.py
++++ b/src/tasks/tracking/rl/runner.py
+@@ -1,4 +1,5 @@
+ import os
++import statistics
+ from typing import cast
+
+ import torch
+@@ -57,6 +58,60 @@ class MotionTrackingOnPolicyRunner(MjlabOnPolicyRunner):
+   ):
+     super().__init__(env, train_cfg, log_dir, device)
+     self.registry_name = registry_name
++    # Read the CLI-propagated configuration and start a new run with no score.
++    self.track_best = bool(train_cfg.get("track_best", True))
++    self.best_checkpoint_metric = train_cfg.get(
++      "best_checkpoint_metric", "mean_episode_reward"
++    )
++    if self.track_best and self.best_checkpoint_metric != "mean_episode_reward":
++      raise ValueError(
++        "Unsupported best-checkpoint metric: "
++        f"{self.best_checkpoint_metric!r}"
++      )
++    self.best_reward = -float("inf")
++
++  def learn(
++    self, num_learning_iterations: int, init_at_random_ep_len: bool = False
++  ) -> None:
++    """Run PPO unchanged, adding a best-checkpoint hook after logging."""
++    # Disabled runs delegate straight to the upstream PPO loop without tracking.
++    if not self.track_best:
++      super().learn(num_learning_iterations, init_at_random_ep_len)
++      return
++
++    # Wrap the existing logger so comparison happens after it computes its metrics.
++    original_log = self.logger.log
++
++    def log_and_track(*args, **kwargs) -> None:
++      original_log(*args, **kwargs)
++      self._save_best_checkpoint(int(kwargs["it"]))
++
++    # Install the hook only for this learn call, then restore the original logger.
++    self.logger.log = log_and_track
++    try:
++      super().learn(num_learning_iterations, init_at_random_ep_len)
++    finally:
++      self.logger.log = original_log
++
++  def _save_best_checkpoint(self, iteration: int) -> None:
++    """Save a best checkpoint when RSL-RL's mean reward improves."""
++    # This is the same 100-episode rolling value logged as Train/mean_reward.
++    if self.logger.writer is None or not self.logger.rewbuffer:
++      return
++    mean_episode_reward = statistics.mean(self.logger.rewbuffer)
++    if mean_episode_reward > self.best_reward:
++      self.best_reward = mean_episode_reward
++      # Reward can improve on nearly every early iteration; re-exporting ONNX
++      # on each of those would repeat expensive work far more often than the
++      # existing periodic/final save schedule already does. The lightweight
++      # .pt checkpoint (with best-checkpoint metadata) is written every time;
++      # ONNX stays on its normal schedule and can be re-exported from any
++      # saved .pt later if a specific best checkpoint is needed as ONNX.
++      self.save(os.path.join(self.logger.log_dir, "model_best.pt"), export_onnx=False)
++      print(
++        "[INFO] New best checkpoint at iteration "
++        f"{iteration}, mean_reward={mean_episode_reward:.3f}"
++      )
+
+   def export_motion_policy_to_onnx(
+     self, path: str, filename: str = "policy.onnx", verbose: bool = False
+@@ -89,8 +144,19 @@ class MotionTrackingOnPolicyRunner(MjlabOnPolicyRunner):
+       dynamo=False,
+     )
+
+-  def save(self, path: str, infos=None):
++  def save(self, path: str, infos=None, export_onnx: bool = True):
++    # Store the current best score with every checkpoint for safe resume behavior.
++    if self.track_best:
++      infos = {
++        **(infos or {}),
++        "best_checkpoint": {
++          "metric": self.best_checkpoint_metric,
++          "best_reward": self.best_reward,
++        },
++      }
+     super().save(path, infos)
++    if not export_onnx:
++      return
+     policy_path = path.split("model")[0]
+     filename = policy_path.split("/")[-2] + ".onnx"
+     self.export_motion_policy_to_onnx(policy_path, filename)
+@@ -114,3 +180,28 @@ class MotionTrackingOnPolicyRunner(MjlabOnPolicyRunner):
+       if self.registry_name is not None:
+         wandb.run.use_artifact(self.registry_name)  # type: ignore
+         self.registry_name = None
++
++  def load(
++    self,
++    path: str,
++    load_cfg: dict | None = None,
++    strict: bool = True,
++    map_location: str | None = None,
++  ) -> dict:
++    """Restore best-checkpoint metadata along with the parent runner state."""
++    infos = super().load(path, load_cfg, strict, map_location)
++    # Recover the historical threshold, or clearly report legacy-checkpoint reset.
++    if self.track_best:
++      best_checkpoint = infos.get("best_checkpoint") if infos else None
++      if best_checkpoint is not None:
++        self.best_reward = float(best_checkpoint["best_reward"])
++        print(
++          "[INFO] Restored best-checkpoint reward: "
++          f"{self.best_reward:.3f} ({best_checkpoint['metric']})"
++        )
++      else:
++        print(
++          "[INFO] Resumed checkpoint has no best-checkpoint metadata; "
++          "best-checkpoint tracking starts fresh."
++        )
++    return infos

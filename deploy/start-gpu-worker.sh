@@ -5,9 +5,11 @@ set -euo pipefail
 
 PROMPTHMR_ROOT="${ROBOMOTION_PROMPTHMR_ROOT:-/opt/prompt-hmr}"
 GMR_ROOT="${ROBOMOTION_GMR_ROOT:-/opt/gmr}"
+TRAIN_ROOT="${ROBOMOTION_TRAIN_ROOT:-/opt/unitree-rl-mjlab}"
 MODEL_CACHE="${ROBOMOTION_MODEL_CACHE:-/models}"
 PROMPTHMR_ENV="${ROBOMOTION_PROMPTHMR_ENV:-phmr_pt2.4}"
 GMR_ENV="${ROBOMOTION_GMR_ENV:-gmr}"
+TRAIN_ENV="${ROBOMOTION_TRAIN_ENV:-train}"
 
 fail() { printf 'GPU worker startup failed: %s\n' "$1" >&2; exit 1; }
 
@@ -21,10 +23,15 @@ rm -rf "$PROMPTHMR_ROOT/data" "$GMR_ROOT/assets/body_models"
 ln -s "$MODEL_CACHE/prompthmr-data" "$PROMPTHMR_ROOT/data"
 ln -s "$MODEL_CACHE/gmr-body-models" "$GMR_ROOT/assets/body_models"
 
-conda run -n "$PROMPTHMR_ENV" python -c 'from pipeline.pipeline import Pipeline' \
-  || fail "PromptHMR environment is unavailable or incomplete."
+(
+  cd "$PROMPTHMR_ROOT"
+  conda run -n "$PROMPTHMR_ENV" python -c 'from pipeline.pipeline import Pipeline'
+) || fail "PromptHMR environment is unavailable or incomplete."
 conda run -n "$GMR_ENV" python -c 'import general_motion_retargeting' \
   || fail "GMR environment is unavailable or incomplete."
+[[ -f "$TRAIN_ROOT/scripts/train.py" ]] || fail "unitree_rl_mjlab source is incomplete. Set ROBOMOTION_TRAIN_ROOT."
+conda run -n "$TRAIN_ENV" python -c 'import mjlab' \
+  || fail "Training environment is unavailable or incomplete."
 
 printf 'GPU model environments verified; starting RoboMotion worker.\n'
 exec npm run worker

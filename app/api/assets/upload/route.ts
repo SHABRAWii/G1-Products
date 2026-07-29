@@ -1,3 +1,4 @@
+import { File } from "node:buffer";
 import { AssetApprovalStatus, AssetType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { databaseConfigured, ensureMvpWorkspace, prisma } from "@/lib/db";
