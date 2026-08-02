@@ -19,6 +19,6 @@ printf '\nDashboard health:\n'
 curl --fail --silent --show-error "http://${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3000}/api/health" || true
 printf '\n\nRecent bootstrap and worker logs:\n'
 if [[ "$FOLLOW" == "--follow" || "$FOLLOW" == "-f" ]]; then
-  exec docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" --profile gpu logs --tail=80 -f model-bootstrap gpu-worker
+  exec docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" --profile gpu logs --tail=80 -f model-bootstrap motion-worker training-worker
 fi
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" --profile gpu logs --tail=40 model-bootstrap gpu-worker
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" --profile gpu logs --tail=40 model-bootstrap motion-worker training-worker

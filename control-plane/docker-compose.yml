@@ -1,0 +1,136 @@
+name: robomotion-control
+
+x-control-environment: &control-environment
+  DATABASE_URL: postgresql://robomotion:${POSTGRES_PASSWORD}@postgres:5432/robomotion?schema=public
+  OBJECT_STORAGE_ENDPOINT: http://minio:9000
+  OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-robomotion}
+  OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY}
+  OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY}
+  ROBOMOTION_MODEL_CACHE: /models
+  ROBOMOTION_DASHBOARD_URL: http://app:3000
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: robomotion
+      POSTGRES_USER: robomotion
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "${CONTROL_PRIVATE_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U robomotion -d robomotion"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${OBJECT_STORAGE_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${OBJECT_STORAGE_SECRET_KEY}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "${CONTROL_PRIVATE_BIND_ADDRESS:-127.0.0.1}:${OBJECT_STORAGE_PORT:-9000}:9000"
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: builder
+    command: npx prisma migrate deploy
+    environment:
+      <<: *control-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web-models-bootstrap:
+    image: alpine:3.21
+    restart: "no"
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        test "$$(find /source -maxdepth 1 -name '*.compiled.stl' | wc -l)" -ge 30
+        mkdir -p /models/unitree-g1-web
+        cp -a /source/. /models/unitree-g1-web/
+    volumes:
+      - ${ROBOMOTION_WEB_MODEL_SOURCE:-../.robomotion/cache/unitree-g1-web}:/source:ro
+      - model-cache:/models
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    environment:
+      <<: *control-environment
+    volumes:
+      - model-cache:/models:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+      web-models-bootstrap:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  artifact-export-worker:
+    build:
+      context: ..
+      dockerfile: control-plane/Dockerfile.services
+    restart: unless-stopped
+    command: ["npm", "run", "worker:export"]
+    environment:
+      <<: *control-environment
+      ROBOMOTION_EXPORT_WORKER_ID: control-artifact-export-worker
+      ROBOMOTION_DIGITAL_TWIN_FPS: ${ROBOMOTION_DIGITAL_TWIN_FPS:-60}
+      ROBOMOTION_DIGITAL_TWIN_CRF: ${ROBOMOTION_DIGITAL_TWIN_CRF:-15}
+    volumes:
+      - model-cache:/models:ro
+    depends_on:
+      app:
+        condition: service_healthy
+      web-models-bootstrap:
+        condition: service_completed_successfully
+
+  runpod-controller:
+    build:
+      context: ..
+      dockerfile: control-plane/Dockerfile.services
+    restart: unless-stopped
+    command: ["npm", "run", "worker:runpod"]
+    profiles: [runpod]
+    environment:
+      <<: *control-environment
+      RUNPOD_API_KEY: ${RUNPOD_API_KEY}
+      RUNPOD_POD_ID: ${RUNPOD_POD_ID}
+      RUNPOD_GPU_IMAGE: ${RUNPOD_GPU_IMAGE:-}
+      RUNPOD_IDLE_AFTER_SECONDS: ${RUNPOD_IDLE_AFTER_SECONDS:-900}
+      RUNPOD_CONTROLLER_POLL_MS: ${RUNPOD_CONTROLLER_POLL_MS:-5000}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-data:
+  minio-data:
+  model-cache:

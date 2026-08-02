@@ -1,0 +1,99 @@
+name: robomotion-gpu
+
+x-gpu-environment: &gpu-environment
+  DATABASE_URL: ${DATABASE_URL}
+  OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT}
+  OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-robomotion}
+  OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY}
+  OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY}
+  ROBOMOTION_MODEL_CACHE: /models
+  ROBOMOTION_PROMPTHMR_ROOT: /opt/prompt-hmr
+  ROBOMOTION_GMR_ROOT: /opt/gmr
+  ROBOMOTION_TRAIN_ROOT: /opt/unitree-rl-mjlab
+  ROBOMOTION_PROMPTHMR_ENV: phmr_pt2.4
+  ROBOMOTION_GMR_ENV: gmr
+  ROBOMOTION_TRAIN_ENV: unitree_rl_mjlab
+  ROBOMOTION_DASHBOARD_URL: ${ROBOMOTION_DASHBOARD_URL}
+  ROBOMOTION_POSE_MAX_HEIGHT: ${ROBOMOTION_POSE_MAX_HEIGHT:-480}
+  ROBOMOTION_POSE_FPS: ${ROBOMOTION_POSE_FPS:-12}
+  ROBOMOTION_POSE_MAX_FRAMES: ${ROBOMOTION_POSE_MAX_FRAMES:-180}
+  HF_TOKEN: ${HF_TOKEN:-}
+
+services:
+  model-bootstrap:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.gpu-worker
+    command: ["bash", "deploy/bootstrap-models.sh"]
+    environment:
+      <<: *gpu-environment
+      SMPLX_USERNAME_FILE: /run/secrets/smplx_username
+      SMPLX_PASSWORD_FILE: /run/secrets/smplx_password
+      SMPL_USERNAME_FILE: /run/secrets/smpl_username
+      SMPL_PASSWORD_FILE: /run/secrets/smpl_password
+    secrets:
+      - smplx_username
+      - smplx_password
+      - smpl_username
+      - smpl_password
+    volumes:
+      - model-cache:/models
+      - conda-envs:/opt/conda/envs
+    gpus: all
+    shm_size: ${GPU_SHM_SIZE:-8gb}
+
+  motion-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.gpu-worker
+    command: ["bash", "deploy/start-gpu-worker.sh"]
+    restart: unless-stopped
+    init: true
+    environment:
+      <<: *gpu-environment
+      ROBOMOTION_WORKER_ID: gpu-motion-worker
+      ROBOMOTION_WORKER_STAGES: pose_extraction,robot_retargeting,visualization
+      NVIDIA_VISIBLE_DEVICES: ${ROBOMOTION_MOTION_GPU:-all}
+    volumes:
+      - model-cache:/models
+      - conda-envs:/opt/conda/envs
+    gpus: all
+    shm_size: ${GPU_SHM_SIZE:-8gb}
+    depends_on:
+      model-bootstrap:
+        condition: service_completed_successfully
+
+  training-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.gpu-worker
+    command: ["bash", "deploy/start-gpu-worker.sh"]
+    restart: unless-stopped
+    init: true
+    environment:
+      <<: *gpu-environment
+      ROBOMOTION_WORKER_ID: gpu-training-worker
+      ROBOMOTION_WORKER_STAGES: training
+      NVIDIA_VISIBLE_DEVICES: ${ROBOMOTION_TRAINING_GPU:-all}
+    volumes:
+      - model-cache:/models
+      - conda-envs:/opt/conda/envs
+    gpus: all
+    shm_size: ${GPU_SHM_SIZE:-8gb}
+    depends_on:
+      model-bootstrap:
+        condition: service_completed_successfully
+
+volumes:
+  model-cache:
+  conda-envs:
+
+secrets:
+  smplx_username:
+    file: "${SMPLX_USERNAME_SECRET_FILE}"
+  smplx_password:
+    file: "${SMPLX_PASSWORD_SECRET_FILE}"
+  smpl_username:
+    file: "${SMPL_USERNAME_SECRET_FILE}"
+  smpl_password:
+    file: "${SMPL_PASSWORD_SECRET_FILE}"

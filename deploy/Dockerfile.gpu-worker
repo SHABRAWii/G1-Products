@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential ca-certificates curl ffmpeg git libegl1 libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 unzip wget \
+    build-essential ca-certificates curl ffmpeg git libegl1 libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 openssh-client unzip wget \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
@@ -44,7 +44,7 @@ ENV ROBOMOTION_PROMPTHMR_ROOT=/opt/prompt-hmr \
     ROBOMOTION_TRAIN_ROOT=/opt/unitree-rl-mjlab \
     ROBOMOTION_PROMPTHMR_ENV=phmr_pt2.4 \
     ROBOMOTION_GMR_ENV=gmr \
-    ROBOMOTION_TRAIN_ENV=train \
+    ROBOMOTION_TRAIN_ENV=unitree_rl_mjlab \
     MUJOCO_GL=egl
 
-CMD ["npm", "run", "worker"]
+CMD ["bash", "deploy/start-runpod-gpu-plane.sh"]

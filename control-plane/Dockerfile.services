@@ -1,0 +1,18 @@
+FROM node:20-bookworm-slim
+
+ENV NODE_ENV=production \
+    ROBOMOTION_CHROME_BIN=/usr/bin/chromium
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates chromium ffmpeg fonts-liberation tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev
+COPY . .
+RUN npx prisma generate
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["npm", "run", "worker:export"]
