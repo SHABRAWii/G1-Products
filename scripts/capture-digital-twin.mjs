@@ -260,6 +260,9 @@ async function main() {
       };
     });
     const frameCount = Math.max(1, Math.round(metadata.duration * outputFps));
+    process.stdout.write(
+      `RoboMotion: Three.js capture 0/${frameCount} frames\n`,
+    );
     encoderState = startEncoder(output, width, height, outputFps);
     for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
       const mediaTime = frameIndex / outputFps;
@@ -272,7 +275,10 @@ async function main() {
         clip: { x: 0, y: 0, width, height },
       });
       await writeFrame(encoderState.encoder.stdin, png);
-      if ((frameIndex + 1) % Math.max(1, Math.round(outputFps)) === 0) {
+      if (
+        (frameIndex + 1) % Math.max(1, Math.round(outputFps)) === 0 ||
+        frameIndex + 1 === frameCount
+      ) {
         process.stdout.write(
           `RoboMotion: Three.js capture ${frameIndex + 1}/${frameCount} frames\n`,
         );

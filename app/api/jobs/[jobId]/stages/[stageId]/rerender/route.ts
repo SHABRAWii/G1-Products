@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { databaseConfigured } from "@/lib/db";
 import {
-  dispatchNextStage,
   OrchestrationError,
   rerunVisualizationStage,
 } from "@/lib/orchestration";
@@ -15,8 +14,7 @@ export async function POST(_: Request, { params }: Context) {
   try {
     const { jobId, stageId } = await params;
     const queued = await rerunVisualizationStage(jobId, stageId);
-    const dispatch = await dispatchNextStage(jobId);
-    return NextResponse.json({ data: { ...queued, dispatch } });
+    return NextResponse.json({ data: queued });
   } catch (error) {
     const status = error instanceof OrchestrationError ? error.status : 400;
     return NextResponse.json(

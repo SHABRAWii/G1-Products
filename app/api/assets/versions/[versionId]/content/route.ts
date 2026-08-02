@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { artifactDownloadFilename, contentDisposition } from "@/lib/artifact-download";
 import { databaseConfigured, ensureMvpWorkspace, prisma } from "@/lib/db";
 import { getArtifact, objectStorageConfigured } from "@/lib/object-storage";
 
@@ -11,8 +12,24 @@ export async function GET(request: Request, { params }: Context) {
   try {
     const { versionId } = await params;
     const { workspace } = await ensureMvpWorkspace();
-    const version = await prisma.assetVersion.findFirst({ where: { id: versionId, asset: { workspaceId: workspace.id } } });
+    const version = await prisma.assetVersion.findFirst({
+      where: { id: versionId, asset: { workspaceId: workspace.id } },
+      include: { asset: { select: { name: true } } },
+    });
     if (!version) return NextResponse.json({ error: "Artifact version was not found." }, { status: 404 });
+    const metadata = version.metadata && typeof version.metadata === "object" && !Array.isArray(version.metadata)
+      ? version.metadata as Record<string, unknown>
+      : {};
+    const jobId = typeof metadata.jobId === "string" ? metadata.jobId : undefined;
+    const job = jobId
+      ? await prisma.job.findFirst({ where: { id: jobId, workspaceId: workspace.id }, select: { name: true } })
+      : null;
+    const filename = artifactDownloadFilename({
+      assetName: version.asset.name,
+      contentType: version.contentType,
+      jobName: job?.name,
+    });
+    const download = new URL(request.url).searchParams.get("download") === "1";
     const range = request.headers.get("range") ?? undefined;
     if (range && !/^bytes=\d*-\d*$/.test(range)) {
       return new Response(null, {
@@ -24,7 +41,7 @@ export async function GET(request: Request, { params }: Context) {
     const headers = new Headers({
       "Content-Type": artifact.contentType,
       "Cache-Control": "private, max-age=60",
-      "Content-Disposition": "inline",
+      "Content-Disposition": contentDisposition(download ? "attachment" : "inline", filename),
       "Accept-Ranges": artifact.acceptRanges ?? "bytes",
     });
     if (artifact.contentLength !== undefined) {

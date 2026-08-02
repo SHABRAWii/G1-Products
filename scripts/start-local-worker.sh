@@ -17,4 +17,16 @@ if [[ -r "$MODEL_ENV" ]]; then
   source "$MODEL_ENV"
 fi
 
+case "${1:-motion}" in
+  motion)
+    export ROBOMOTION_WORKER_ID="${ROBOMOTION_WORKER_ID:-local-pipeline-worker-motion}"
+    export ROBOMOTION_WORKER_STAGES="${ROBOMOTION_WORKER_STAGES:-pose_extraction,robot_retargeting,visualization}"
+    ;;
+  training)
+    export ROBOMOTION_WORKER_ID="${ROBOMOTION_WORKER_ID:-local-pipeline-worker-training}"
+    export ROBOMOTION_WORKER_STAGES="${ROBOMOTION_WORKER_STAGES:-training}"
+    ;;
+  *) printf 'Usage: %s [motion|training]\n' "$0" >&2; exit 2 ;;
+esac
+
 exec "$PROJECT_ROOT/node_modules/.bin/tsx" "$PROJECT_ROOT/scripts/pipeline-worker.ts"

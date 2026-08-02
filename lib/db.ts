@@ -21,5 +21,10 @@ export async function ensureMvpWorkspace() {
     update: {},
     create: { workspaceId: workspace.id, name: "RoboMotion MVP" },
   });
+  await prisma.robotModel.upsert({
+    where: { workspaceId_slug: { workspaceId: workspace.id, slug: "unitree_g1" } },
+    update: { name: "Unitree G1", dof: 29, active: true },
+    create: { workspaceId: workspace.id, slug: "unitree_g1", name: "Unitree G1", dof: 29, config: { motionContract: "motion.robot.unitree-g1-29dof-npz/v2" } },
+  });
   return { workspace, project };
 }

@@ -16,6 +16,19 @@ export async function GET(_: Request, { params }: Context) {
         stages: { include: { attempts: { orderBy: { attempt: "desc" } }, reviewTask: true, artifacts: { include: { assetVersion: { select: { id: true, contentType: true, schemaVersion: true, asset: { select: { name: true, type: true } } } } } } }, orderBy: { position: "asc" } },
         costs: { orderBy: { createdAt: "desc" } },
         reviewTasks: { orderBy: { createdAt: "desc" } },
+        artifactExports: {
+          orderBy: { createdAt: "desc" },
+          include: {
+            outputAssetVersion: {
+              select: {
+                id: true,
+                contentType: true,
+                schemaVersion: true,
+                asset: { select: { name: true, type: true } },
+              },
+            },
+          },
+        },
         inputAssetVersion: { select: { id: true, contentType: true, schemaVersion: true, asset: { select: { name: true, type: true } } } },
       },
     });

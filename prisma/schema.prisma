@@ -84,27 +84,40 @@ enum StageArtifactRole {
   EVIDENCE
 }
 
+enum ArtifactExportKind {
+  DIGITAL_TWIN_MP4
+}
+
+enum ArtifactExportStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
 model Workspace {
-  id        String    @id @default(cuid())
-  slug      String    @unique
-  name      String
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  projects  Project[]
-  assets    Asset[]
-  jobs      Job[]
-  rateCards RateCard[]
-  computeResources ComputeResource[]
-  computeLeases ComputeLease[]
-  robotModels RobotModel[]
-  trainingRecipes TrainingRecipe[]
-  trainingRuns TrainingRun[]
-  policies Policy[]
-  evaluationRuns EvaluationRun[]
+  id                  String               @id @default(cuid())
+  slug                String               @unique
+  name                String
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  projects            Project[]
+  assets              Asset[]
+  jobs                Job[]
+  rateCards           RateCard[]
+  computeResources    ComputeResource[]
+  computeLeases       ComputeLease[]
+  robotModels         RobotModel[]
+  trainingRecipes     TrainingRecipe[]
+  trainingRuns        TrainingRun[]
+  policies            Policy[]
+  evaluationRuns      EvaluationRun[]
   simulationScenarios SimulationScenario[]
-  simulationRuns SimulationRun[]
-  budgets Budget[]
-  budgetAlerts BudgetAlert[]
+  simulationRuns      SimulationRun[]
+  budgets             Budget[]
+  budgetAlerts        BudgetAlert[]
+  artifactExports     ArtifactExport[]
 }
 
 model WorkerHeartbeat {
@@ -116,11 +129,11 @@ model WorkerHeartbeat {
 }
 
 model Project {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   name        String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   jobs        Job[]
 
@@ -128,13 +141,13 @@ model Project {
 }
 
 model Asset {
-  id          String       @id @default(cuid())
+  id          String         @id @default(cuid())
   workspaceId String
   name        String
   type        AssetType
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   versions    AssetVersion[]
 
   @@index([workspaceId, type])
@@ -155,87 +168,91 @@ model AssetVersion {
   asset          Asset               @relation(fields: [assetId], references: [id], onDelete: Cascade)
   inputJobs      Job[]               @relation("JobInputAsset")
   stageArtifacts StageArtifact[]
+  exportSources  ArtifactExport[]    @relation("ArtifactExportSource")
+  exportOutputs  ArtifactExport[]    @relation("ArtifactExportOutput")
 
   @@unique([assetId, version])
   @@unique([storageKey])
 }
 
 model Job {
-  id                String       @id @default(cuid())
-  workspaceId       String
-  projectId         String
+  id                  String            @id @default(cuid())
+  workspaceId         String
+  projectId           String
   inputAssetVersionId String?
-  name              String
-  robotModel        String
-  startStage        PipelineStage
-  endStage          PipelineStage
-  status            JobStatus    @default(DRAFT)
-  plan              Json
-  estimateMinor     Int          @default(0)
-  estimateCurrency  String       @default("USD")
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
-  workspace         Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  project           Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  inputAssetVersion AssetVersion? @relation("JobInputAsset", fields: [inputAssetVersionId], references: [id], onDelete: SetNull)
-  stages            JobStage[]
-  costs             CostLedgerEntry[]
-  reviewTasks       ReviewTask[]
-  computeLeases     ComputeLease[]
-  events            JobEvent[]
+  name                String
+  robotModel          String
+  startStage          PipelineStage
+  endStage            PipelineStage
+  status              JobStatus         @default(DRAFT)
+  plan                Json
+  estimateMinor       Int               @default(0)
+  estimateCurrency    String            @default("USD")
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  workspace           Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project             Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  inputAssetVersion   AssetVersion?     @relation("JobInputAsset", fields: [inputAssetVersionId], references: [id], onDelete: SetNull)
+  stages              JobStage[]
+  costs               CostLedgerEntry[]
+  reviewTasks         ReviewTask[]
+  computeLeases       ComputeLease[]
+  events              JobEvent[]
+  artifactExports     ArtifactExport[]
 
   @@index([workspaceId, status, createdAt])
   @@index([projectId, createdAt])
 }
 
 model JobStage {
-  id          String        @id @default(cuid())
-  jobId       String
-  stage       PipelineStage
-  position    Int
-  status      StageStatus   @default(PENDING)
-  adapter     String
-  config      Json          @default("{}")
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  job         Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  attempts    StageAttempt[]
-  reviewTask  ReviewTask?
-  artifacts   StageArtifact[]
+  id              String           @id @default(cuid())
+  jobId           String
+  stage           PipelineStage
+  position        Int
+  status          StageStatus      @default(PENDING)
+  adapter         String
+  config          Json             @default("{}")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  job             Job              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  attempts        StageAttempt[]
+  reviewTask      ReviewTask?
+  artifacts       StageArtifact[]
+  artifactExports ArtifactExport[]
 
   @@unique([jobId, position])
   @@index([status, createdAt])
 }
 
 model StageAttempt {
-  id          String   @id @default(cuid())
-  jobStageId  String
+  id           String        @id @default(cuid())
+  jobStageId   String
   attempt      Int
   workerId     String?
   containerRef String?
-  status       StageStatus @default(LEASED)
+  status       StageStatus   @default(LEASED)
   startedAt    DateTime?
   endedAt      DateTime?
-  result       Json     @default("{}")
+  result       Json          @default("{}")
   errorCode    String?
-  createdAt    DateTime @default(now())
-  jobStage     JobStage @relation(fields: [jobStageId], references: [id], onDelete: Cascade)
+  createdAt    DateTime      @default(now())
+  jobStage     JobStage      @relation(fields: [jobStageId], references: [id], onDelete: Cascade)
   computeLease ComputeLease?
 
   @@unique([jobStageId, attempt])
 }
 
 model ReviewTask {
-  id           String       @id @default(cuid())
+  id           String             @id @default(cuid())
   jobId        String
-  jobStageId   String       @unique
-  status       ReviewStatus @default(PENDING)
+  jobStageId   String             @unique
+  status       ReviewStatus       @default(PENDING)
   decisionNote String?
   reviewedBy   String?
-  createdAt    DateTime     @default(now())
+  createdAt    DateTime           @default(now())
   decidedAt    DateTime?
-  job          Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  jobStage     JobStage     @relation(fields: [jobStageId], references: [id], onDelete: Cascade)
+  job          Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  jobStage     JobStage           @relation(fields: [jobStageId], references: [id], onDelete: Cascade)
   annotations  ReviewAnnotation[]
 
   @@index([status, createdAt])
@@ -277,15 +294,15 @@ model RateCard {
 }
 
 model RateCardItem {
-  id         String   @id @default(cuid())
-  rateCardId String
-  sku        String
-  category   String
-  unit       String
+  id          String   @id @default(cuid())
+  rateCardId  String
+  sku         String
+  category    String
+  unit        String
   amountMinor Int
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  rateCard   RateCard @relation(fields: [rateCardId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  rateCard    RateCard @relation(fields: [rateCardId], references: [id], onDelete: Cascade)
 
   @@unique([rateCardId, sku])
 }
@@ -333,14 +350,14 @@ model ComputeLease {
 }
 
 model JobEvent {
-  id        String   @id @default(cuid())
+  id        String         @id @default(cuid())
   jobId     String
   type      String
   stage     PipelineStage?
   message   String
-  metadata  Json     @default("{}")
-  createdAt DateTime @default(now())
-  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  metadata  Json           @default("{}")
+  createdAt DateTime       @default(now())
+  job       Job            @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, createdAt])
 }
@@ -373,17 +390,47 @@ model StageArtifact {
   @@index([assetVersionId])
 }
 
+model ArtifactExport {
+  id                        String               @id @default(cuid())
+  workspaceId               String
+  jobId                     String
+  jobStageId                String
+  kind                      ArtifactExportKind
+  status                    ArtifactExportStatus @default(QUEUED)
+  sourceSceneAssetVersionId String
+  outputAssetVersionId      String?
+  progressCurrent           Int                  @default(0)
+  progressTotal             Int?
+  attempts                  Int                  @default(0)
+  workerId                  String?
+  config                    Json                 @default("{}")
+  errorMessage              String?
+  startedAt                 DateTime?
+  finishedAt                DateTime?
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+  workspace                 Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  job                       Job                  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  jobStage                  JobStage             @relation(fields: [jobStageId], references: [id], onDelete: Cascade)
+  sourceSceneAssetVersion   AssetVersion         @relation("ArtifactExportSource", fields: [sourceSceneAssetVersionId], references: [id], onDelete: Restrict)
+  outputAssetVersion        AssetVersion?        @relation("ArtifactExportOutput", fields: [outputAssetVersionId], references: [id], onDelete: SetNull)
+
+  @@unique([jobStageId, kind])
+  @@index([status, createdAt])
+  @@index([workspaceId, status, createdAt])
+}
+
 model RobotModel {
-  id          String   @id @default(cuid())
+  id          String               @id @default(cuid())
   workspaceId String
   slug        String
   name        String
   dof         Int
-  active      Boolean  @default(true)
-  config      Json     @default("{}")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  active      Boolean              @default(true)
+  config      Json                 @default("{}")
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  workspace   Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   policies    Policy[]
   scenarios   SimulationScenario[]
 
@@ -391,37 +438,37 @@ model RobotModel {
 }
 
 model TrainingRecipe {
-  id          String   @id @default(cuid())
+  id          String        @id @default(cuid())
   workspaceId String
   slug        String
   name        String
   algorithm   String
-  config      Json     @default("{}")
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  config      Json          @default("{}")
+  active      Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   runs        TrainingRun[]
 
   @@unique([workspaceId, slug])
 }
 
 model TrainingRun {
-  id          String          @id @default(cuid())
+  id          String         @id @default(cuid())
   workspaceId String
-  jobId       String?         @unique
+  jobId       String?        @unique
   recipeId    String
   policyId    String?
   name        String
   status      String
-  metrics     Json            @default("{}")
+  metrics     Json           @default("{}")
   startedAt   DateTime?
   endedAt     DateTime?
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  recipe      TrainingRecipe  @relation(fields: [recipeId], references: [id], onDelete: Restrict)
-  policy      Policy?         @relation(fields: [policyId], references: [id], onDelete: SetNull)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  recipe      TrainingRecipe @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  policy      Policy?        @relation(fields: [policyId], references: [id], onDelete: SetNull)
 }
 
 model Policy {
@@ -441,17 +488,17 @@ model Policy {
 }
 
 model PolicyVersion {
-  id          String          @id @default(cuid())
-  policyId    String
-  version     Int
-  status      String          @default("CANDIDATE")
+  id                       String          @id @default(cuid())
+  policyId                 String
+  version                  Int
+  status                   String          @default("CANDIDATE")
   checkpointAssetVersionId String?
-  metrics     Json            @default("{}")
-  promotedAt  DateTime?
-  createdAt   DateTime        @default(now())
-  policy      Policy          @relation(fields: [policyId], references: [id], onDelete: Cascade)
-  evaluations EvaluationRun[]
-  simulations SimulationRun[]
+  metrics                  Json            @default("{}")
+  promotedAt               DateTime?
+  createdAt                DateTime        @default(now())
+  policy                   Policy          @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  evaluations              EvaluationRun[]
+  simulations              SimulationRun[]
 
   @@unique([policyId, version])
 }
@@ -471,54 +518,54 @@ model EvaluationRun {
 }
 
 model SimulationScenario {
-  id           String        @id @default(cuid())
+  id           String          @id @default(cuid())
   workspaceId  String
   robotModelId String
   slug         String
   name         String
-  config       Json          @default("{}")
-  active       Boolean       @default(true)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  robotModel   RobotModel    @relation(fields: [robotModelId], references: [id], onDelete: Restrict)
+  config       Json            @default("{}")
+  active       Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  workspace    Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  robotModel   RobotModel      @relation(fields: [robotModelId], references: [id], onDelete: Restrict)
   runs         SimulationRun[]
 
   @@unique([workspaceId, slug])
 }
 
 model SimulationRun {
-  id              String             @id @default(cuid())
-  workspaceId     String
-  jobId           String?            @unique
-  policyVersionId String
-  scenarioId      String
-  status          String
-  passed          Boolean?
-  metrics         Json               @default("{}")
+  id               String             @id @default(cuid())
+  workspaceId      String
+  jobId            String?            @unique
+  policyVersionId  String
+  scenarioId       String
+  status           String
+  passed           Boolean?
+  metrics          Json               @default("{}")
   verificationNote String?
-  verifiedBy      String?
-  verifiedAt      DateTime?
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
-  workspace       Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  policyVersion   PolicyVersion      @relation(fields: [policyVersionId], references: [id], onDelete: Restrict)
-  scenario        SimulationScenario @relation(fields: [scenarioId], references: [id], onDelete: Restrict)
+  verifiedBy       String?
+  verifiedAt       DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  workspace        Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  policyVersion    PolicyVersion      @relation(fields: [policyVersionId], references: [id], onDelete: Restrict)
+  scenario         SimulationScenario @relation(fields: [scenarioId], references: [id], onDelete: Restrict)
 }
 
 model Budget {
-  id           String       @id @default(cuid())
+  id           String        @id @default(cuid())
   workspaceId  String
   name         String
   category     String?
   limitMinor   Int
-  currency     String       @default("USD")
-  alertPercent Int          @default(80)
-  enforcement  String       @default("WARN")
-  active       Boolean      @default(true)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  currency     String        @default("USD")
+  alertPercent Int           @default(80)
+  enforcement  String        @default("WARN")
+  active       Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   alerts       BudgetAlert[]
 
   @@unique([workspaceId, name])
@@ -526,16 +573,16 @@ model Budget {
 }
 
 model BudgetAlert {
-  id          String   @id @default(cuid())
-  workspaceId String
-  budgetId    String
-  jobId       String?
-  level       String
-  message     String
+  id            String    @id @default(cuid())
+  workspaceId   String
+  budgetId      String
+  jobId         String?
+  level         String
+  message       String
   forecastMinor Int
-  createdAt   DateTime @default(now())
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  budget      Budget   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  createdAt     DateTime  @default(now())
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  budget        Budget    @relation(fields: [budgetId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, createdAt])
   @@index([budgetId, createdAt])

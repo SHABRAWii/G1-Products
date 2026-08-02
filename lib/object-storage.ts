@@ -1,5 +1,7 @@
 import { CreateBucketCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 
 let bucketReady: Promise<void> | undefined;
 
@@ -62,6 +64,28 @@ export async function putArtifact(input: { workspaceId: string; assetId: string;
     Metadata: { sha256: checksum, "schema-version": "artifact/v1" },
   }));
   return { storageKey, checksum, byteSize: input.body.byteLength, bucket: settings.bucket };
+}
+
+export async function putArtifactFile(input: { workspaceId: string; assetId: string; version: number; filename: string; path: string; contentType: string }) {
+  const { settings, s3 } = await ensureBucket();
+  const storageKey = createArtifactObjectKey(input.workspaceId, input.assetId, input.version, input.filename);
+  const file = await stat(input.path);
+  const checksum = await new Promise<string>((resolve, reject) => {
+    const hash = createHash("sha256");
+    const stream = createReadStream(input.path);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+  await s3.send(new PutObjectCommand({
+    Bucket: settings.bucket,
+    Key: storageKey,
+    Body: createReadStream(input.path),
+    ContentLength: file.size,
+    ContentType: input.contentType,
+    Metadata: { sha256: checksum, "schema-version": "artifact/v1" },
+  }));
+  return { storageKey, checksum, byteSize: file.size, bucket: settings.bucket };
 }
 
 export async function getArtifact(storageKey: string, range?: string) {
