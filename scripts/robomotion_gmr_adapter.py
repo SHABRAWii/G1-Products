@@ -4,15 +4,14 @@
 from __future__ import annotations
 
 import argparse
-import pickle
 import sys
 from pathlib import Path
 
 import numpy as np
 import torch
 
-from smplx_motion import validate_track
-from g1_motion import contact_aware_grounding, load_g1_model, validate_qpos
+from smplx_motion import load_smplx_archive, validate_track
+from g1_motion import contact_aware_grounding, load_g1_model, save_robot_motion, validate_qpos
 
 
 def load_smplx_for_gmr(smplx_file: Path, model_dir: Path):
@@ -27,7 +26,7 @@ def load_smplx_for_gmr(smplx_file: Path, model_dir: Path):
     """
     import smplx
 
-    data = np.load(smplx_file, allow_pickle=True)
+    data = load_smplx_archive(smplx_file)
     betas = np.asarray(data["betas"], dtype=np.float32).reshape(-1)
     if not len(betas):
         raise RuntimeError("The SMPL-X input contains no body-shape coefficients.")
@@ -146,7 +145,7 @@ def main() -> None:
         "fps": float(fps), "robot_type": args.robot, "num_frames": int(len(qpos)), "human_height": float(human_height),
         "root_pos": root_position, "root_rot": root_rotation, "dof_pos": joints,
         "local_body_pos": local_body_position.numpy().astype(np.float32), "link_body_list": kinematics.body_names,
-        # The durable pickle keeps GMR's xyzw quaternion convention. Consumers
+        # The durable NPZ keeps GMR's xyzw quaternion convention. Consumers
         # must reorder it to MuJoCo's wxyz free-joint layout before mj_forward.
         "qpos_layout": "root_xyz-root_quaternion_xyzw-29_hinge_radians",
         "joint_names": list(ground_after["jointNames"]),
@@ -158,8 +157,7 @@ def main() -> None:
             "rootHeightCorrection": ground_correction.astype(np.float32),
         },
     }
-    with destination.open("wb") as file:
-        pickle.dump(motion, file, protocol=pickle.HIGHEST_PROTOCOL)
+    save_robot_motion(destination, motion)
     print(
         f"GMR: saved {destination.name}; {joints.shape[1]} DoF; {len(qpos)} frames; "
         f"penetration {ground_before['summary']['maximumPenetration'] * 1000:.1f} mm -> "

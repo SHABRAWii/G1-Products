@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pickle
 import sys
 import tempfile
 import unittest
@@ -11,7 +10,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from g1_motion import G1_29_DOF_JOINTS  # noqa: E402
+from g1_motion import G1_29_DOF_JOINTS, save_robot_motion  # noqa: E402
 from robomotion_training_adapter import load_motion, motion_to_rows  # noqa: E402
 
 
@@ -35,12 +34,15 @@ class TrainingAdapterTests(unittest.TestCase):
         rows = motion_to_rows(motion)
         self.assertEqual(rows.shape, (2, 36))
         np.testing.assert_array_equal(rows[:, :3], motion["root_pos"])
-        np.testing.assert_array_equal(rows[:, 3:7], motion["root_rot"])
+        expected_rot = motion["root_rot"] / np.linalg.norm(motion["root_rot"], axis=1)[:, None]
+        np.testing.assert_allclose(rows[:, 3:7], expected_rot)
         np.testing.assert_array_equal(rows[:, 7:], motion["dof_pos"])
 
-    def test_missing_joint_names_warns_but_does_not_raise(self):
+    def test_missing_joint_names_are_rejected_unless_explicitly_reviewed(self):
         motion = make_motion(joint_names=None)
-        rows = motion_to_rows(motion)
+        with self.assertRaisesRegex(ValueError, "no joint_names"):
+            motion_to_rows(motion)
+        rows = motion_to_rows(motion, skip_joint_check=True)
         self.assertEqual(rows.shape, (2, 36))
 
     def test_mismatched_joint_order_raises(self):
@@ -62,12 +64,38 @@ class TrainingAdapterTests(unittest.TestCase):
             motion_to_rows(motion)
 
     def test_load_motion_reports_missing_fields(self):
-        with tempfile.NamedTemporaryFile(suffix=".pkl") as handle:
-            pickle.dump({"fps": 30.0}, handle)
-            handle.flush()
+        with tempfile.NamedTemporaryFile(suffix=".npz") as handle:
+            save_robot_motion(handle.name, {"fps": 30.0})
             with self.assertRaises(ValueError) as context:
                 load_motion(Path(handle.name))
         self.assertIn("root_pos", str(context.exception))
+
+    def test_pickle_is_rejected_without_deserialization(self):
+        with tempfile.NamedTemporaryFile(suffix=".pkl") as handle:
+            handle.write(b"not-even-a-pickle")
+            handle.flush()
+            with self.assertRaisesRegex(ValueError, "Unsafe robot-motion artifact"):
+                load_motion(Path(handle.name))
+
+    def test_safe_npz_round_trip_preserves_numeric_arrays_and_metadata(self):
+        motion = make_motion()
+        with tempfile.NamedTemporaryFile(suffix=".npz") as handle:
+            save_robot_motion(handle.name, motion)
+            loaded = load_motion(Path(handle.name))
+        np.testing.assert_array_equal(loaded["root_pos"], motion["root_pos"])
+        np.testing.assert_array_equal(loaded["root_rot"], motion["root_rot"])
+        np.testing.assert_array_equal(loaded["dof_pos"], motion["dof_pos"])
+        self.assertEqual(tuple(loaded["joint_names"]), G1_29_DOF_JOINTS)
+
+    def test_non_finite_and_zero_quaternion_are_rejected(self):
+        motion = make_motion()
+        motion["dof_pos"][0, 0] = np.nan
+        with self.assertRaisesRegex(ValueError, "NaN or Infinity"):
+            motion_to_rows(motion)
+        motion = make_motion()
+        motion["root_rot"][0] = 0
+        with self.assertRaisesRegex(ValueError, "near zero"):
+            motion_to_rows(motion)
 
 
 if __name__ == "__main__":

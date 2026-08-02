@@ -1,7 +1,9 @@
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -134,6 +136,35 @@ class DigitalTwinRenderTests(unittest.TestCase):
         red, green, blue = MODULE.STUDIO_AMBIENT_LIGHT
         self.assertGreater(float(green), float(red))
         self.assertGreater(float(blue), float(green))
+
+    def test_scene_only_builds_interactive_data_without_browser_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            motion = Path(directory) / "motion.npz"
+            scene = Path(directory) / "scene.json"
+            motion.touch()
+            with (
+                patch.object(
+                    MODULE,
+                    "write_scene",
+                    return_value={"frames": [[], []]},
+                ) as write_scene,
+                patch.object(MODULE, "render_three_digital_twin") as capture,
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "render-robot-motion.py",
+                        "--motion",
+                        str(motion),
+                        "--scene-output",
+                        str(scene),
+                        "--scene-only",
+                    ],
+                ),
+            ):
+                MODULE.main()
+            write_scene.assert_called_once()
+            capture.assert_not_called()
 
 
 if __name__ == "__main__":

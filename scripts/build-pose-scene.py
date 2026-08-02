@@ -14,12 +14,13 @@ import torch
 from smplx_motion import (
     SMPLX_BODY_EDGES,
     SMPLX_BODY_JOINT_NAMES,
+    load_smplx_archive,
     validate_track,
 )
 
 
 def _track_value(
-    data: np.lib.npyio.NpzFile,
+    data: dict[str, np.ndarray],
     name: str,
     frames: int,
     width: int,
@@ -33,7 +34,7 @@ def load_joints(
     path: Path,
     model_dir: Path,
 ) -> tuple[np.ndarray, float, dict[str, list[int]]]:
-    data = np.load(path, allow_pickle=True)
+    data = load_smplx_archive(path)
     frames = int(np.asarray(data["pose_body"]).shape[0])
     betas = np.asarray(data["betas"], dtype=np.float32).reshape(-1)
     root_orient = np.asarray(data["root_orient"], dtype=np.float32)

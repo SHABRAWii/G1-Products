@@ -8,6 +8,7 @@ introduced here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,72 @@ G1_29_DOF_JOINTS = (
     "right_wrist_pitch_joint",
     "right_wrist_yaw_joint",
 )
+
+ROBOT_MOTION_SCHEMA = "motion.robot.unitree-g1-29dof-npz/v2"
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    return value
+
+
+def save_robot_motion(path: str | Path, motion: dict[str, Any]) -> None:
+    """Persist robot motion without Python object deserialization."""
+
+    destination = Path(path)
+    if destination.suffix.lower() != ".npz":
+        raise ValueError("Robot motion must be stored as a .npz artifact.")
+    arrays: dict[str, np.ndarray] = {}
+    metadata: dict[str, Any] = {"schema_version": ROBOT_MOTION_SCHEMA}
+    for key, value in motion.items():
+        if isinstance(value, np.ndarray):
+            arrays[key] = value
+        else:
+            metadata[key] = _json_value(value)
+    arrays["metadata_json"] = np.asarray(json.dumps(metadata, separators=(",", ":")))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(destination, **arrays)
+
+
+def load_robot_motion(path: str | Path) -> dict[str, Any]:
+    """Load the safe NPZ contract and reject executable pickle artifacts."""
+
+    source = Path(path)
+    if source.suffix.lower() != ".npz":
+        raise ValueError(
+            "Unsafe robot-motion artifact rejected. Use the "
+            f"{ROBOT_MOTION_SCHEMA} NPZ contract instead of pickle."
+        )
+    with np.load(source, allow_pickle=False) as archive:
+        if "metadata_json" not in archive:
+            raise ValueError("Robot-motion NPZ is missing metadata_json.")
+        try:
+            metadata = json.loads(str(np.asarray(archive["metadata_json"]).item()))
+        except (json.JSONDecodeError, ValueError) as error:
+            raise ValueError("Robot-motion NPZ contains invalid metadata JSON.") from error
+        if metadata.get("schema_version") != ROBOT_MOTION_SCHEMA:
+            raise ValueError(
+                "Robot-motion schema mismatch; expected "
+                f"{ROBOT_MOTION_SCHEMA}, received {metadata.get('schema_version')!r}."
+            )
+        motion = {
+            key: np.asarray(archive[key])
+            for key in archive.files
+            if key != "metadata_json"
+        }
+    motion.update({key: value for key, value in metadata.items() if key != "schema_version"})
+    required = ("root_pos", "root_rot", "dof_pos", "fps")
+    missing = [key for key in required if key not in motion]
+    if missing:
+        raise ValueError(f"Robot-motion NPZ is missing required field(s): {missing}.")
+    return motion
 
 
 @dataclass(frozen=True)

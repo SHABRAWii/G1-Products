@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import pickle
 import struct
 import subprocess
 import tempfile
@@ -16,7 +15,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from g1_motion import analyze_qpos, validate_qpos
+from g1_motion import analyze_qpos, load_robot_motion, validate_qpos
 
 # G1 link indices from the motion artifact written by robomotion_gmr_adapter.
 KINEMATIC_CHAINS = (
@@ -738,8 +737,7 @@ def render_digital_twin_preview(scene: dict, output_path: Path) -> int:
 def write_scene(motion_path: Path, robot: str, scene_output: str | None = None) -> dict:
     import mujoco
 
-    with motion_path.open("rb") as file:
-        motion = pickle.load(file)
+    motion = load_robot_motion(motion_path)
     edges = [[start, end] for chain, _ in KINEMATIC_CHAINS for start, end in zip(chain, chain[1:])]
     xml_path = robot_xml_path(robot)
     model = load_robot_model(xml_path)
@@ -918,12 +916,22 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--motion", required=True)
     parser.add_argument("--robot", default="unitree_g1")
-    parser.add_argument("--output", required=True)
+    parser.add_argument("--output", help="MP4 output path. Required unless --scene-only is used.")
     parser.add_argument("--scene-output", help="Optional JSON scene for the interactive dashboard viewer.")
+    parser.add_argument(
+        "--scene-only",
+        action="store_true",
+        help="Build interactive scene JSON without launching the browser MP4 capture.",
+    )
     args = parser.parse_args()
     motion_path = Path(args.motion).resolve()
-    output_path = Path(args.output).resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if args.scene_only and not args.scene_output:
+        parser.error("--scene-only requires --scene-output")
+    if not args.scene_only and not args.output:
+        parser.error("--output is required unless --scene-only is used")
+    output_path = Path(args.output).resolve() if args.output else None
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_scene: tempfile.NamedTemporaryFile | None = None
     if args.scene_output:
         scene_path = Path(args.scene_output).resolve()
@@ -937,6 +945,14 @@ def main() -> None:
         scene_path = Path(temporary_scene.name)
     scene_path.parent.mkdir(parents=True, exist_ok=True)
     scene = write_scene(motion_path, args.robot, str(scene_path))
+    if args.scene_only:
+        print(
+            f"RoboMotion: built {len(scene['frames'])} frames of interactive "
+            f"Unitree G1 scene data without MP4 capture",
+            flush=True,
+        )
+        return
+    assert output_path is not None
     try:
         frames = render_three_digital_twin(scene_path, output_path)
         renderer_name = "the production Three.js digital twin"

@@ -1,7 +1,6 @@
 import os
 import importlib.util
 import json
-import pickle
 import sys
 import tempfile
 import unittest
@@ -131,10 +130,10 @@ class G1MotionTests(unittest.TestCase):
             and int(self.model.geom_group[geom]) == 1
         ]
         with tempfile.TemporaryDirectory() as directory:
-            motion_path = Path(directory) / "motion.pkl"
+            motion_path = Path(directory) / "motion.npz"
             scene_path = Path(directory) / "scene.json"
-            with motion_path.open("wb") as file:
-                pickle.dump(motion, file)
+            from g1_motion import save_robot_motion
+            save_robot_motion(motion_path, motion)
             renderer.write_scene(motion_path, "unitree_g1", str(scene_path))
             scene = json.loads(scene_path.read_text())
         self.assertEqual(scene["floorHeight"], 0.0)

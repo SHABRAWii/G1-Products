@@ -9,6 +9,7 @@ array.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -56,6 +57,14 @@ Z_UP_TO_THREE_Y_UP = np.asarray(
     dtype=np.float32,
 )
 
+SMPLX_REQUIRED_FIELDS = (
+    "root_orient",
+    "pose_body",
+    "betas",
+    "trans",
+    "gender",
+)
+
 
 @dataclass(frozen=True)
 class SMPLXParameters:
@@ -66,6 +75,31 @@ class SMPLXParameters:
     reye_pose: np.ndarray
     left_hand_pose: np.ndarray
     right_hand_pose: np.ndarray
+
+
+def load_smplx_archive(path: str | Path) -> dict[str, np.ndarray]:
+    """Load a numeric SMPL-X NPZ without permitting executable object arrays."""
+    source = Path(path)
+    if source.suffix.lower() != ".npz":
+        raise ValueError("SMPL-X motion must use the safe NPZ container.")
+    try:
+        with np.load(source, allow_pickle=False) as archive:
+            missing = [name for name in SMPLX_REQUIRED_FIELDS if name not in archive]
+            if missing:
+                raise ValueError(
+                    "SMPL-X motion is missing required fields: "
+                    + ", ".join(missing)
+                    + "."
+                )
+            values = {name: np.asarray(archive[name]).copy() for name in archive.files}
+    except ValueError as error:
+        if "Object arrays cannot be loaded" in str(error):
+            raise ValueError(
+                "SMPL-X motion contains an unsafe object array; only numeric and "
+                "Unicode NPZ fields are accepted."
+            ) from error
+        raise
+    return values
 
 
 def _finite(name: str, value: np.ndarray) -> np.ndarray:

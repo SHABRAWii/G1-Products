@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert a robot-motion pickle to the CSV layout unitree_rl_mjlab's own
+"""Convert a safe robot-motion NPZ to the CSV layout unitree_rl_mjlab's own
 `csv_to_npz.py` expects: one row per frame of
 `[root_xyz(3), root_quat_xyzw(4), dof_pos(N)]`.
 
@@ -12,37 +12,27 @@ which replays the columns through the robot's own kinematic chain to derive
 per-link world poses and velocities -- data this script has no way to
 fabricate correctly.
 
-RoboMotion's own pkls additionally carry `joint_names`, which lets this
+RoboMotion's safe NPZ artifacts additionally carry `joint_names`, which lets this
 script verify the 29 dof_pos columns are in mjlab's expected order before
-writing anything. Third-party pkls (like g1-moves') don't carry that field;
-for those, only the column count is checked, and the joint order is trusted
-to follow the same canonical Unitree G1 29-DoF convention (the ecosystem's
-only real joint ordering for this robot). Pass --skip-joint-check to
-silence the resulting warning once you've verified a given source by hand.
+writing anything. Artifacts without that metadata are rejected by default;
+`--skip-joint-check` exists only for an explicitly reviewed external safe NPZ.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import pickle
-import sys
 from pathlib import Path
 
 import numpy as np
 
-from g1_motion import G1_29_DOF_JOINTS
+from g1_motion import G1_29_DOF_JOINTS, load_robot_motion
 
 REQUIRED_KEYS = ("root_pos", "root_rot", "dof_pos", "fps")
 
 
 def load_motion(path: Path) -> dict:
-    with path.open("rb") as file:
-        motion = pickle.load(file)
-    missing = [key for key in REQUIRED_KEYS if key not in motion]
-    if missing:
-        raise ValueError(f"Robot-motion pickle is missing required field(s): {missing}.")
-    return motion
+    return load_robot_motion(path)
 
 
 def motion_to_rows(motion: dict, skip_joint_check: bool = False) -> np.ndarray:
@@ -50,6 +40,8 @@ def motion_to_rows(motion: dict, skip_joint_check: bool = False) -> np.ndarray:
     root_rot = np.asarray(motion["root_rot"], dtype=np.float64)
     dof_pos = np.asarray(motion["dof_pos"], dtype=np.float64)
     frames = root_pos.shape[0]
+    if frames < 2:
+        raise ValueError("Robot motion must contain at least two frames.")
     if root_pos.shape != (frames, 3):
         raise ValueError(f"root_pos must have shape ({frames}, 3); received {root_pos.shape}.")
     if root_rot.shape != (frames, 4):
@@ -59,6 +51,16 @@ def motion_to_rows(motion: dict, skip_joint_check: bool = False) -> np.ndarray:
             f"dof_pos must have shape ({frames}, {len(G1_29_DOF_JOINTS)}); received {dof_pos.shape}. "
             "Only the Unitree G1 29-DoF layout is currently supported by this converter."
         )
+    if not np.isfinite(root_pos).all() or not np.isfinite(root_rot).all() or not np.isfinite(dof_pos).all():
+        raise ValueError("Robot motion contains NaN or Infinity.")
+    fps = float(motion["fps"])
+    if not np.isfinite(fps) or fps <= 0 or fps > 1000:
+        raise ValueError(f"fps must be finite and within (0, 1000]; received {fps}.")
+    quaternion_norms = np.linalg.norm(root_rot, axis=1)
+    if np.any(quaternion_norms < 1e-8):
+        frame = int(np.where(quaternion_norms < 1e-8)[0][0])
+        raise ValueError(f"root_rot quaternion norm is near zero at frame {frame}.")
+    root_rot = root_rot / quaternion_norms[:, None]
 
     joint_names = motion.get("joint_names")
     if joint_names is not None:
@@ -68,22 +70,20 @@ def motion_to_rows(motion: dict, skip_joint_check: bool = False) -> np.ndarray:
                 f"Unitree G1 29-DoF order; actual={tuple(joint_names)}."
             )
     elif not skip_joint_check:
-        print(
-            "WARNING: this pickle has no joint_names field, so the dof_pos column order "
-            "could not be verified against mjlab's expected Unitree G1 29-DoF order. "
-            "Assuming the standard canonical ordering. Pass --skip-joint-check once you've "
-            "confirmed this source by hand to silence this warning.",
-            file=sys.stderr,
+        raise ValueError(
+            "The motion artifact has no joint_names metadata, so its 29 columns cannot be "
+            "safely mapped to the Unitree G1. Verify the external source explicitly and pass "
+            "--skip-joint-check only for that reviewed import."
         )
 
     return np.concatenate([root_pos, root_rot, dof_pos], axis=1)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Convert a RoboMotion robot-motion pickle to mjlab's training CSV layout")
-    parser.add_argument("--motion", required=True, help="Path to a robot-motion pickle (RoboMotion GMR output or a compatible third-party G1 retargeter)")
+    parser = argparse.ArgumentParser(description="Convert a safe RoboMotion robot-motion NPZ to mjlab's training CSV layout")
+    parser.add_argument("--motion", required=True, help="Path to a motion.robot.unitree-g1-29dof-npz/v2 artifact")
     parser.add_argument("--output", required=True, help="Path to write the CSV motion file")
-    parser.add_argument("--skip-joint-check", action="store_true", help="Silence the joint-order warning for pickles without a joint_names field")
+    parser.add_argument("--skip-joint-check", action="store_true", help="Silence the joint-order warning for artifacts without a joint_names field")
     args = parser.parse_args()
 
     source = Path(args.motion).resolve()
@@ -104,7 +104,7 @@ def main() -> None:
     }
     # Written alongside stdout so a caller that only captures the CSV (e.g. a
     # subprocess wrapper that doesn't parse stdout) can still recover fps/frame
-    # count without re-opening the source pickle.
+    # count without re-opening the source artifact.
     destination.with_suffix(".json").write_text(json.dumps(summary), encoding="utf-8")
     print(json.dumps(summary), flush=True)
 

@@ -15,6 +15,7 @@ from smplx_motion import (  # noqa: E402
     SMPLX_BODY_PARENTS,
     axis_angle_to_quaternion,
     bone_geometry,
+    load_smplx_archive,
     source_to_three,
     split_prompthmr_smplx_pose,
 )
@@ -56,6 +57,40 @@ class SMPLXMotionTests(unittest.TestCase):
         np.testing.assert_allclose(midpoint, (1.0, 3.0, 3.0))
         np.testing.assert_allclose(direction, (0.0, 1.0, 0.0))
         self.assertAlmostEqual(length, 2.0)
+
+    def test_smplx_archive_rejects_object_arrays(self) -> None:
+        with self.subTest("object arrays are never unpickled"):
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "unsafe.npz"
+                np.savez(
+                    path,
+                    root_orient=np.zeros((1, 3), dtype=np.float32),
+                    pose_body=np.zeros((1, 63), dtype=np.float32),
+                    betas=np.zeros(10, dtype=np.float32),
+                    trans=np.zeros((1, 3), dtype=np.float32),
+                    gender=np.asarray({"unsafe": True}, dtype=object),
+                )
+                with self.assertRaisesRegex(ValueError, "unsafe object array"):
+                    load_smplx_archive(path)
+
+    def test_smplx_archive_loads_numeric_unicode_fields(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "safe.npz"
+            np.savez(
+                path,
+                root_orient=np.zeros((1, 3), dtype=np.float32),
+                pose_body=np.zeros((1, 63), dtype=np.float32),
+                betas=np.zeros(10, dtype=np.float32),
+                trans=np.zeros((1, 3), dtype=np.float32),
+                gender=np.asarray("neutral"),
+            )
+            loaded = load_smplx_archive(path)
+            self.assertEqual(str(loaded["gender"]), "neutral")
+            self.assertEqual(loaded["pose_body"].shape, (1, 63))
 
 
 if __name__ == "__main__":
