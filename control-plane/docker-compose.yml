@@ -88,9 +88,11 @@ services:
         - CMD
         - node
         - -e
-        - fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+        - >-
+          fetch('http://127.0.0.1:3000/api/health').then(async r=>{if(!r.ok){console.error('health endpoint returned '+r.status+': '+await r.text());process.exit(1)}}).catch(error=>{console.error(error);process.exit(1)})
       interval: 10s
       timeout: 5s
+      start_period: 10s
       retries: 20
 
   artifact-export-worker:
