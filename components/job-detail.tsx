@@ -2,19 +2,59 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import { Bot, BrainCircuit, CheckCircle2, ChevronDown, ChevronUp, CircleAlert, ClipboardCheck, Clock3, Download, FileText, Gamepad2, MonitorPlay, PersonStanding, Play, RotateCcw, Share2, ShieldCheck, Video, XCircle } from "lucide-react";
+import { Activity, Award, Bot, BrainCircuit, CheckCircle2, ChevronDown, ChevronUp, CircleAlert, ClipboardCheck, Clock3, Download, FileText, Gamepad2, Gauge, MonitorPlay, PersonStanding, Play, RefreshCw, RotateCcw, Share2, ShieldCheck, Video, XCircle } from "lucide-react";
 import { stageLabels, type PipelineStage } from "@/lib/domain";
 import { StatusBadge } from "@/components/status-badge";
 import { Motion3DViewer } from "@/components/motion-3d-viewer";
 import { artifactDisplayName } from "@/lib/artifact-display-name";
+import { completeTrainingTelemetry, createTrainingTelemetry, ingestTrainingLog } from "@/lib/training-telemetry";
 
 type AssetVersion = { id: string; contentType: string; schemaVersion: string; asset: { name: string; type: string } };
 type StageArtifact = { role: "INPUT" | "OUTPUT" | "PREVIEW" | "EVIDENCE"; assetVersion: AssetVersion };
-type WorkerResult = { state?: string; logs?: string[]; summary?: string; updatedAt?: string; message?: string };
+type TrainingPoint = {
+  iteration: number;
+  totalIterations: number;
+  totalSteps?: number;
+  stepsPerSecond?: number;
+  meanReward?: number;
+  meanEpisodeLength?: number;
+  rewards?: Record<string, number>;
+  terminations?: Record<string, number>;
+  errors?: Record<string, number>;
+};
+type TrainingResult = {
+  currentIteration?: number;
+  totalIterations?: number;
+  progress?: number;
+  history?: TrainingPoint[];
+  latest?: TrainingPoint;
+  best?: { iteration: number; meanReward: number } | null;
+  bestSavedMeanReward?: number | null;
+  qualityStatus?: string;
+  evaluation?: {
+    completedReferenceMotion?: boolean;
+    completionRatio?: number;
+    firstFailureReasons?: string[];
+    meanStepReward?: number;
+    qualityStatus?: string;
+  };
+};
+type WorkerResult = { state?: string; logs?: string[]; summary?: string; updatedAt?: string; message?: string; training?: TrainingResult };
 type StageAttempt = { id: string; attempt: number; status: string; startedAt?: string; endedAt?: string; result?: WorkerResult };
 type Stage = { id: string; stage: PipelineStage; status: string; position: number; adapter: string; attempts: StageAttempt[]; reviewTask: { id: string; status: string } | null; artifacts: StageArtifact[] };
 type Cost = { id: string; amountMinor: number; category: string; provider: string; kind: string; createdAt: string };
-type Job = { id: string; name: string; status: string; robotModel: string; startStage?: PipelineStage; endStage?: PipelineStage; estimateMinor: number; estimateCurrency: string; createdAt: string; stages: Stage[]; costs: Cost[]; inputAssetVersion: AssetVersion | null; worker: { ready: boolean; status: string; detail: string } };
+type ArtifactExport = {
+  id: string;
+  jobStageId: string;
+  kind: "DIGITAL_TWIN_MP4";
+  status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+  progressCurrent: number;
+  progressTotal: number | null;
+  attempts: number;
+  errorMessage: string | null;
+  outputAssetVersion: AssetVersion | null;
+};
+type Job = { id: string; name: string; status: string; robotModel: string; startStage?: PipelineStage; endStage?: PipelineStage; estimateMinor: number; estimateCurrency: string; createdAt: string; stages: Stage[]; costs: Cost[]; artifactExports: ArtifactExport[]; inputAssetVersion: AssetVersion | null; worker: { ready: boolean; status: string; detail: string } };
 export type PlaybackSync = {
   masterVideo: MutableRefObject<HTMLVideoElement | null>;
   muted?: boolean;
@@ -27,10 +67,10 @@ const descriptions: Record<PipelineStage, string> = {
   pose_review: "The extracted motion is checked before it is released to GMR.",
   robot_retargeting: "GMR converts the approved human track to Unitree G1 joint motion.",
   visualization: "Inspect the retargeted Unitree G1 motion as an interactive digital twin.",
-  training: "Training is not configured for this workspace.", policy_evaluation: "Policy evaluation is not configured for this workspace.", simulation_verification: "Simulation verification is not configured for this workspace.",
+  training: "Motion-imitation training is executing. Checkpoints and the candidate policy will be published when it completes.", policy_evaluation: "Policy evaluation is not configured for this workspace.", simulation_verification: "Simulation verification is not configured for this workspace.",
 };
 
-function artifactUrl(artifact: AssetVersion) { return `/api/assets/versions/${artifact.id}/content`; }
+function artifactUrl(artifact: AssetVersion, download = false) { return `/api/assets/versions/${artifact.id}/content${download ? "?download=1" : ""}`; }
 function stageArtifact(stage: Stage, role: StageArtifact["role"]) { return stage.artifacts.findLast((artifact) => artifact.role === role)?.assetVersion; }
 function stageArtifacts(stage: Stage, role: StageArtifact["role"]) { return stage.artifacts.filter((artifact) => artifact.role === role).map((artifact) => artifact.assetVersion); }
 function isVideo(artifact?: AssetVersion) { return Boolean(artifact?.contentType.startsWith("video/")); }
@@ -158,6 +198,181 @@ function MediaPanel({ artifact, title, empty, sync, master = false }: { artifact
   return <div className="run-media run-media--file"><FileText size={20} /><b>{title}</b><strong>{artifactDisplayName(artifact.asset.name)}</strong><a className="button button--subtle" href={artifactUrl(artifact)} target="_blank">Open artifact</a></div>;
 }
 
+function TrainingSparkline({ values }: { values: number[] }) {
+  if (!values.length) return <div className="training-sparkline training-sparkline--empty">Waiting for iteration data</div>;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = Math.max(max - min, 1e-9);
+  const points = values.map((value, index) => {
+    const x = values.length === 1 ? 50 : (index / (values.length - 1)) * 100;
+    const y = 32 - ((value - min) / span) * 28;
+    return `${x},${y}`;
+  }).join(" ");
+  return <svg className="training-sparkline" viewBox="0 0 100 36" preserveAspectRatio="none" aria-label="Metric history"><polyline points={points} /></svg>;
+}
+
+function TrainingMetricFamily({ title, values, empty }: { title: string; values?: Record<string, number>; empty: string }) {
+  const rows = Object.entries(values ?? {}).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  return (
+    <article>
+      <header><h3>{title}</h3><span>{rows.length} signals</span></header>
+      {rows.length ? <dl>{rows.map(([name, value]) => (
+        <div key={name}><dt>{name.replaceAll("_", " ")}</dt><dd>{value.toFixed(4)}</dd></div>
+      ))}</dl> : <p>{empty}</p>}
+    </article>
+  );
+}
+
+function recoveredTrainingResult(attempt?: StageAttempt): TrainingResult | undefined {
+  if (attempt?.result?.training) return attempt.result.training;
+  const logs = attempt?.result?.logs;
+  if (!logs?.length) return undefined;
+  const telemetry = createTrainingTelemetry();
+  logs.forEach((line) => ingestTrainingLog(telemetry, line));
+  if (!telemetry.history.length) return undefined;
+  if (attempt?.status === "SUCCEEDED") completeTrainingTelemetry(telemetry, true);
+  return telemetry;
+}
+
+function TrainingStageBody({ stage, input }: { stage: Stage; input?: AssetVersion }) {
+  const [activeTab, setActiveTab] = useState<"overview" | "learning" | "health" | "policy" | "files">("overview");
+  const attempt = stage.attempts[0];
+  const training = recoveredTrainingResult(attempt);
+  const history = training?.history ?? [];
+  const latest = training?.latest ?? history.at(-1);
+  const totalIterations = training?.totalIterations ?? latest?.totalIterations ?? 0;
+  const currentIteration = training?.currentIteration ?? latest?.iteration ?? 0;
+  const progress = stage.status === "SUCCEEDED"
+    ? 1
+    : training?.progress ?? (totalIterations ? (currentIteration + 1) / totalIterations : 0);
+  const bestReward = training?.bestSavedMeanReward ?? training?.best?.meanReward;
+  const preview = stage.artifacts.find((artifact) => artifact.assetVersion.schemaVersion === "visualization.policy-best-rollout/v1")?.assetVersion;
+  const checkpoint = stage.artifacts.find((artifact) => artifact.assetVersion.schemaVersion === "policy.checkpoint.rsl-rl-latest/v1")?.assetVersion;
+  const bestCheckpoint = stage.artifacts.find((artifact) => artifact.assetVersion.schemaVersion === "policy.checkpoint.rsl-rl-best/v1")?.assetVersion;
+  const metrics = stage.artifacts.find((artifact) => artifact.assetVersion.schemaVersion === "training.metrics/v1")?.assetVersion;
+  const wandb = stage.artifacts.find((artifact) => artifact.assetVersion.schemaVersion === "training.wandb-offline/v1")?.assetVersion;
+  const learningVideos = stage.artifacts
+    .filter((artifact) => artifact.assetVersion.schemaVersion === "visualization.policy-learning-progress/v1")
+    .map((artifact) => artifact.assetVersion);
+  const evaluation = training?.evaluation;
+  const completionText = evaluation
+    ? evaluation.completedReferenceMotion
+      ? "Reference motion completed"
+      : `Terminated at ${Math.round((evaluation.completionRatio ?? 0) * 100)}%`
+    : stage.status === "SUCCEEDED"
+      ? "Evaluation unavailable"
+      : "Evaluates after checkpoint";
+  const failureReasons = evaluation?.firstFailureReasons?.length
+    ? evaluation.firstFailureReasons.join(", ").replaceAll("_", " ")
+    : null;
+  const dominantTermination = latest?.terminations
+    ? Object.entries(latest.terminations).sort((a, b) => b[1] - a[1])[0]
+    : undefined;
+
+  return (
+    <div className="training-monitor">
+      <section className="training-monitor__hero">
+        <div>
+          <small>TRAINING PROGRESS</small>
+          <h3>{stage.status === "SUCCEEDED" ? "Optimization completed" : `Iteration ${Math.min(currentIteration + 1, totalIterations || currentIteration + 1)} of ${totalIterations || "…"}`}</h3>
+          <p>Completion means the optimizer reached its configured iterations. Policy quality is reported separately by the reference rollout.</p>
+        </div>
+        <strong>{Math.round(progress * 100)}%</strong>
+        <div className="training-monitor__progress"><span style={{ width: `${Math.round(progress * 100)}%` }} /></div>
+      </section>
+
+      <nav className="training-monitor__tabs" aria-label="Training evidence views">
+        {([
+          ["overview", "Overview"],
+          ["learning", "Learning"],
+          ["health", "Terminations & errors"],
+          ["policy", "Policy replay"],
+          ["files", "Files"],
+        ] as const).map(([tab, label]) => (
+          <button key={tab} className={activeTab === tab ? "is-active" : ""} onClick={() => setActiveTab(tab)} type="button">
+            {label}
+            {tab === "learning" && learningVideos.length ? <span>{learningVideos.length}</span> : null}
+          </button>
+        ))}
+      </nav>
+
+      {activeTab === "overview" ? <section className="training-monitor__panel">
+        <div className="training-monitor__kpis">
+          <article><span><Award size={18} /></span><small>Best mean reward</small><strong>{bestReward !== undefined && bestReward !== null ? bestReward.toFixed(3) : "Waiting"}</strong><em>{training?.best ? `saved at iteration ${training.best.iteration}` : "from saved checkpoints"}</em></article>
+          <article><span><Activity size={18} /></span><small>Anchor position error</small><strong>{latest?.errors?.error_anchor_pos !== undefined ? `${latest.errors.error_anchor_pos.toFixed(3)} m` : "Waiting"}</strong><em>Latest training iteration</em></article>
+          <article><span><Gauge size={18} /></span><small>Reference rollout</small><strong>{completionText}</strong><em>{failureReasons ? `Reason: ${failureReasons}` : "Independent post-training check"}</em></article>
+          <article><span><BrainCircuit size={18} /></span><small>Throughput</small><strong>{latest?.stepsPerSecond ? `${Math.round(latest.stepsPerSecond).toLocaleString()} steps/s` : "Waiting"}</strong><em>{latest?.totalSteps ? `${Math.round(latest.totalSteps).toLocaleString()} total steps` : "No samples yet"}</em></article>
+        </div>
+        <div className="training-monitor__explanation">
+          <strong>Optimization and task success are different.</strong>
+          <p>A completed training run reached its configured iteration limit. The reference rollout reports whether the saved policy actually followed the complete motion without an environment termination.</p>
+        </div>
+      </section> : null}
+
+      {activeTab === "learning" ? <section className="training-monitor__panel">
+        <div className="training-monitor__charts training-monitor__charts--single">
+          <article><header><div><small>LEARNING CURVE</small><h3>Mean reward by iteration</h3></div><strong>{latest?.meanReward?.toFixed(3) ?? "—"}</strong></header><TrainingSparkline values={history.flatMap((point) => point.meanReward === undefined ? [] : [point.meanReward])} /></article>
+        </div>
+        <section className="training-monitor__wandb training-monitor__wandb--single">
+          <div><small>REWARD BREAKDOWN</small><h3>Latest recorded iteration</h3><p>Component rewards reveal which parts of the tracking objective are improving and which remain weak.</p></div>
+          <div><TrainingMetricFamily title="Reward components" values={latest?.rewards} empty="Reward components have not been emitted yet." /></div>
+        </section>
+        <div className="training-monitor__capture-heading">
+          <div><small>NATIVE MJLAB CAPTURES</small><h3>Policy behavior during learning</h3></div>
+          <p>These clips are produced by MjLab&apos;s own <code>train.py --video</code> recorder. They show learning progress; the scored best-checkpoint replay is under Policy replay.</p>
+        </div>
+        {learningVideos.length ? <div className="training-monitor__policy-grid">{learningVideos.map((artifact, index) => (
+          <MediaPanel key={artifact.id} artifact={artifact} title={`Learning capture ${index + 1}`} empty="Capture unavailable." />
+        ))}</div> : <div className="training-monitor__empty">
+          <MonitorPlay size={22} /><strong>No native learning captures on this run</strong>
+          <p>Existing runs were created before periodic MjLab capture was enabled. New training jobs preserve these clips automatically when enabled in the job configuration.</p>
+        </div>}
+      </section> : null}
+
+      {activeTab === "health" ? <section className="training-monitor__panel">
+        <div className="training-monitor__charts training-monitor__charts--single">
+          <article><header><div><small>DOMINANT FAILURE SIGNAL</small><h3>{dominantTermination ? dominantTermination[0].replaceAll("_", " ") : "Termination events"}</h3></div><strong>{dominantTermination?.[1].toFixed(2) ?? "—"}</strong></header><TrainingSparkline values={history.flatMap((point) => dominantTermination && point.terminations?.[dominantTermination[0]] !== undefined ? [point.terminations[dominantTermination[0]]] : [])} /></article>
+        </div>
+        <section className="training-monitor__wandb training-monitor__wandb--two">
+          <div><small>RSL-RL DIAGNOSTICS</small><h3>Latest recorded iteration</h3><p>Termination and motion-error signals explain why an episode ends or why tracking quality remains poor.</p></div>
+          <div>
+            <TrainingMetricFamily title="Terminations" values={latest?.terminations} empty="No termination signals have been emitted." />
+            <TrainingMetricFamily title="Motion errors" values={latest?.errors} empty="Motion errors have not been emitted yet." />
+          </div>
+        </section>
+      </section> : null}
+
+      {activeTab === "policy" ? <section className="training-monitor__panel training-monitor__policy">
+        <div className="training-monitor__evaluation">
+          <div><small>BEST SAVED CHECKPOINT</small><h3>{completionText}</h3><p>{failureReasons ? `First rollout termination: ${failureReasons}.` : "The evaluator loads the saved RSL-RL policy and the same reference motion using MjLab's task and runner APIs."}</p></div>
+          <dl>
+            <div><dt>Motion completed</dt><dd>{evaluation ? (evaluation.completedReferenceMotion ? "Yes" : "No") : "Pending"}</dd></div>
+            <div><dt>Completion</dt><dd>{evaluation?.completionRatio !== undefined ? `${Math.round(evaluation.completionRatio * 100)}%` : "—"}</dd></div>
+            <div><dt>Mean step reward</dt><dd>{evaluation?.meanStepReward !== undefined ? evaluation.meanStepReward.toFixed(3) : "—"}</dd></div>
+            <div><dt>Checkpoint</dt><dd>{bestCheckpoint ? artifactDisplayName(bestCheckpoint.asset.name) : "Not saved"}</dd></div>
+          </dl>
+        </div>
+        <MediaPanel artifact={preview} title="Best policy replay" empty={stage.status === "SUCCEEDED" ? "The best-policy rollout could not be rendered. Open the training logs and evaluation report for the precise failure." : "The best saved checkpoint is rendered and scored after optimization."} />
+      </section> : null}
+
+      {activeTab === "files" ? <section className="training-monitor__panel">
+        <article className="training-monitor__downloads">
+          <small>TRAINING EVIDENCE</small>
+          <h3>Checkpoints, metrics, and W&B offline data</h3>
+          <p>The files below use stable download names. Extract the W&B archive and run <code>wandb sync &lt;run-folder&gt;</code> to publish the complete offline history to your W&B workspace.</p>
+          <div>
+            {checkpoint ? <a className="button button--subtle" href={artifactUrl(checkpoint, true)}><Download size={14} /> Latest checkpoint</a> : null}
+            {bestCheckpoint ? <a className="button button--subtle" href={artifactUrl(bestCheckpoint, true)}><Download size={14} /> Best checkpoint</a> : null}
+            {metrics ? <a className="button button--subtle" href={artifactUrl(metrics, true)}><Download size={14} /> Metrics JSON</a> : null}
+            {wandb ? <a className="button button--subtle" href={artifactUrl(wandb, true)}><Download size={14} /> W&B offline run</a> : null}
+          </div>
+          {input ? <p className="training-monitor__source">Training source: <b>{artifactDisplayName(input.asset.name)}</b></p> : null}
+        </article>
+      </section> : null}
+    </div>
+  );
+}
+
 function SourceStage({ artifact }: { artifact?: AssetVersion }) {
   const video = isVideo(artifact); const title = video ? "Source Video" : "Run Input";
   return <article className="run-stage run-stage--source"><header className="run-stage__header"><span className="run-stage__number"><CheckCircle2 size={16} /></span><span className="run-stage__icon"><Video size={19} /></span><div><small>STEP 1 · SOURCE</small><h2>{title}</h2><p>{artifact ? (video ? "Uploaded video retained as the immutable source for this pipeline run." : "A previously produced artifact is the immutable input for this partial pipeline run.") : "The selected source artifact will appear here."}</p></div><StatusBadge status={artifact ? "SUCCEEDED" : "PENDING"} /></header><div className="run-stage__content"><MediaPanel artifact={artifact} title={video ? "Source video" : "Input artifact"} empty="No input artifact was attached to this run." /></div></article>;
@@ -257,13 +472,38 @@ function StageCard({ stage, stages, job, expanded, onToggle, onAction, busy }: {
       </div>
     );
   } else if (stage.stage === "visualization") {
+    const artifactExport = job.artifactExports.find((candidate) => candidate.jobStageId === stage.id && candidate.kind === "DIGITAL_TWIN_MP4");
     const hasDigitalTwinMp4 = stage.artifacts.some(
       (artifact) =>
         artifact.assetVersion.schemaVersion === "visualization.robot-digital-twin/v1",
     );
     stageBody = (
       <div className="run-stage__digital-twin run-stage__digital-twin--robot">
-        {stage.status === "SUCCEEDED" && !hasDigitalTwinMp4 ? (
+        {artifactExport && ["QUEUED", "RUNNING"].includes(artifactExport.status) ? (
+          <div className="run-stage__export-status">
+            <RefreshCw className="artifact-export__spinner" size={16} />
+            <span>
+              <b>{artifactExport.status === "RUNNING" ? "Digital-twin MP4 is rendering in the background" : "Digital-twin MP4 is queued"}</b>
+              <small>
+                {artifactExport.progressTotal
+                  ? `${artifactExport.progressCurrent} / ${artifactExport.progressTotal} frames`
+                  : "Training and the rest of the pipeline can continue while this export runs."}
+              </small>
+            </span>
+          </div>
+        ) : artifactExport?.status === "FAILED" ? (
+          <div className="run-stage__retry">
+            <CircleAlert size={15} />
+            <span>{artifactExport.errorMessage ?? "The MP4 export failed without affecting the pipeline."}</span>
+            <button
+              className="button button--primary"
+              disabled={busy}
+              onClick={() => onAction(`/api/artifact-exports/${artifactExport.id}/retry`)}
+            >
+              <RotateCcw size={14} /> Retry MP4 export
+            </button>
+          </div>
+        ) : stage.status === "SUCCEEDED" && !hasDigitalTwinMp4 ? (
           <div className="run-stage__retry">
             <MonitorPlay size={15} />
             <span>This older run has an interactive scene but no digital-twin MP4.</span>
@@ -291,6 +531,8 @@ function StageCard({ stage, stages, job, expanded, onToggle, onAction, busy }: {
         )}
       </div>
     );
+  } else if (stage.stage === "training") {
+    stageBody = <TrainingStageBody stage={stage} input={input} />;
   } else {
     stageBody = (
       <div className="run-stage__visuals">
@@ -342,6 +584,7 @@ export function JobDetail({ jobId }: { jobId: string }) {
       candidate.role === entry.role &&
       candidate.assetVersion.schemaVersion === entry.assetVersion.schemaVersion
     ) === index);
+  const pendingExports = job.artifactExports.filter((artifactExport) => artifactExport.status !== "SUCCEEDED");
   const latestDownload = [...artifacts].reverse().find((entry) => entry.role === "OUTPUT")?.assetVersion;
   const completedCount = job.stages.filter((stage) => stage.status === "SUCCEEDED").length;
   const robot = formatRobotModel(job.robotModel);
@@ -368,7 +611,7 @@ export function JobDetail({ jobId }: { jobId: string }) {
             <Share2 size={15} /> Share
           </button>
           {latestDownload ? (
-            <a className="button button--primary" href={artifactUrl(latestDownload)}>
+            <a className="button button--primary" href={artifactUrl(latestDownload, true)}>
               <Download size={15} /> Download latest
             </a>
           ) : (
@@ -450,15 +693,39 @@ export function JobDetail({ jobId }: { jobId: string }) {
             </dl>
           </article>
           <article className="run-artifacts">
-            <div className="run-sidebar__heading"><h2>Artifacts</h2><span>{artifacts.length}</span></div>
-            {artifacts.length ? (
+            <div className="run-sidebar__heading"><h2>Artifacts</h2><span>{artifacts.length + pendingExports.length}</span></div>
+            {artifacts.length || pendingExports.length ? (
               <ul>
                 {artifacts.map(({ assetVersion, role, stage }) => (
                   <li key={`${stage.id}-${role}-${assetVersion.id}`}>
-                    <a href={artifactUrl(assetVersion)} target="_blank">
+                    <a href={artifactUrl(assetVersion, true)}>
                       <FileText size={14} />
                       <span><b>{artifactDisplayName(assetVersion.asset.name)}</b><small>{stageLabels[stage.stage]} · {role.toLowerCase()}</small></span>
                     </a>
+                  </li>
+                ))}
+                {pendingExports.map((artifactExport) => (
+                  <li className={`artifact-export artifact-export--${artifactExport.status.toLowerCase()}`} key={artifactExport.id}>
+                    <button
+                      type="button"
+                      disabled={!["FAILED", "CANCELLED"].includes(artifactExport.status) || busy}
+                      onClick={() => action(`/api/artifact-exports/${artifactExport.id}/retry`)}
+                      title={artifactExport.errorMessage ?? undefined}
+                    >
+                      {["QUEUED", "RUNNING"].includes(artifactExport.status)
+                        ? <RefreshCw className="artifact-export__spinner" size={14} />
+                        : <CircleAlert size={14} />}
+                      <span>
+                        <b>visualization · unitree_g1_digital-twin.mp4</b>
+                        <small>
+                          {artifactExport.status === "RUNNING" && artifactExport.progressTotal
+                            ? `Rendering · ${artifactExport.progressCurrent}/${artifactExport.progressTotal} frames`
+                            : artifactExport.status === "QUEUED"
+                              ? "Queued · waiting for export worker"
+                              : `${artifactExport.status.toLowerCase()} · select to retry`}
+                        </small>
+                      </span>
+                    </button>
                   </li>
                 ))}
               </ul>
