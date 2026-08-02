@@ -1,52 +1,85 @@
-# Deployment file and persistence map
+# Production file and persistence map
 
-## Files committed to Git
+This map applies only to **Server 1 VPS + Server 2 RunPod**.
 
-| File | Responsibility |
-| --- | --- |
-| `Dockerfile` | Builds the non-root production Next.js dashboard image. |
-| `deploy/Dockerfile.gpu-worker` | Builds the CUDA 12.1 worker/bootstrap image with Node, Conda, FFmpeg, EGL, build tools, and pinned PromptHMR/GMR source trees. |
-| `docker-compose.server.yml` | Connects database, object storage, migrations, dashboard, model bootstrap, GPU worker, secrets, and named volumes. |
-| `.env.server.example` | Documents every non-secret server setting and secret-file path. |
-| `deploy/prepare-server.sh` | Creates private credentials and `.env.server` without overwriting existing configuration. |
-| `deploy/server-preflight.sh` | Verifies Docker, Compose, NVIDIA access, required environment values, secret files, disk space, and exposure mode. |
-| `deploy/deploy-server.sh` | Runs preflight and starts or updates the production Compose stack. |
-| `deploy/bootstrap-models.sh` | Invokes the direct, idempotent model installer inside `model-bootstrap`. |
-| `deploy/install-direct-models.sh` | Installs pinned PromptHMR/GMR environments, downloads licensed/public assets, and verifies PromptHMR files with SHA-256. |
-| `deploy/start-gpu-worker.sh` | Reattaches persistent model data, verifies both Conda environments, and starts the pipeline worker. |
-| `deploy/server-status.sh` | Shows Compose state, dashboard health, and model/worker logs. |
+## Server 1 · website VPS
 
-## Files intentionally not committed
+| File | Purpose |
+|---|---|
+| `control-plane/docker-compose.yml` | PostgreSQL, MinIO, migrations, dashboard, MP4 exporter, RunPod controller |
+| `control-plane/.env` | VPS passwords, ports, RunPod Pod ID/API key/image digest; never committed |
+| `control-plane/deploy/up.sh` | Builds and starts Server 1; enables controller when RunPod values exist |
+| `control-plane/deploy/status.sh` | Shows Server 1 health and service state |
+| `control-plane/Dockerfile.services` | Chromium/FFmpeg export and controller runtime |
+| `scripts/artifact-export-worker.ts` | Produces downloadable digital-twin MP4s in the background |
+| `scripts/runpod-controller.ts` | Starts, updates, dispatches to, and stops the configured Pod |
 
-| Path | Why it stays local |
-| --- | --- |
-| `.env.local` | Local database/storage settings and credentials. |
-| `.env.server` | Production passwords, binding, tokens, and secret paths. |
-| `.robomotion/` | Licensed body models, checkpoints, Conda/model cache, installer logs, and private secret files. |
-| `node_modules/`, `.next/` | Reproducible dependency and build outputs. |
-| `graphify-out/`, `.claude/`, `.codex/` | Local development metadata rather than application runtime. |
+Persistent Docker volumes:
 
-## Named Docker volumes
+| Volume | Data | Back up? |
+|---|---|---:|
+| `postgres-data` | Jobs, stages, reviews, costs, worker state, policy records | Yes |
+| `minio-data` | Uploads, poses, robot motion, videos, checkpoints, policies | Yes |
+| `model-cache` | Compiled Unitree G1 browser meshes | Rebuildable |
 
-| Volume | Contents | Required for recovery? |
-| --- | --- | --- |
-| `postgres-data` | Jobs, stages, costs, reviews, lineage, and worker state. | Yes, to retain dashboard records. |
-| `minio-data` | Uploaded videos and generated pipeline artifacts. | Yes, to retain actual files. |
-| `model-cache` | PromptHMR checkpoints, SMPL/SMPL-X models, conversion assets, and GMR body-model link targets. | Rebuildable, but expensive to download. |
-| `conda-envs` | Installed PromptHMR and GMR Python environments. | Rebuildable, but expensive to install. |
+## Server 2 · RunPod RTX 4090
 
-The model bootstrap and GPU worker are separate containers. `conda-envs` makes the installed Python environments visible to both. `start-gpu-worker.sh` recreates source-tree symlinks into `model-cache` every time a worker container starts.
+| File | Purpose |
+|---|---|
+| `deploy/Dockerfile.gpu-worker` | Builds the x86-64 CUDA GPU image |
+| `deploy/start-runpod-gpu-plane.sh` | Opens the restricted tunnel, bootstraps models, starts the worker |
+| `deploy/bootstrap-models.sh` | Calls the idempotent direct installer |
+| `deploy/install-direct-models.sh` | Installs and verifies PromptHMR, GMR, SMPL assets, and training runtime |
+| `deploy/start-gpu-worker.sh` | Validates required engines before publishing ready capabilities |
+| `deploy/verify-training-runtime.sh` | Enforces the pinned training source/patch/torch contract |
+| `gpu-plane/runpod-template.example.json` | GPU, volume, command, environment, and secret references |
 
-## Runtime dependency direction
+Persistent `/workspace` directories:
 
-```text
-Browser → Next.js dashboard → PostgreSQL
-                         └──→ MinIO
+| Path | Data |
+|---|---|
+| `/workspace/models` | PromptHMR checkpoints and shared body models |
+| `/workspace/robomotion` | Installer state, logs, and persistent support files |
+| `/workspace/conda-envs` | PromptHMR, GMR, and training environments |
+| `/workspace/conda-pkgs` | Downloaded Conda packages |
 
-Next.js job plan → PostgreSQL queue → GPU worker
-GPU worker → PromptHMR/GMR/MuJoCo → MinIO artifacts + PostgreSQL status/cost/logs
+Stopping the Pod preserves these. Terminating the Pod can lose its attached
+volume. Prefer a network volume where the chosen RunPod region supports it.
 
-model-bootstrap → model-cache + conda-envs → GPU worker
+## Secrets
+
+| Location | Contains |
+|---|---|
+| VPS `control-plane/.env` | Database/object-storage secrets and RunPod controller credentials |
+| VPS tunnel user `authorized_keys` | Only the restricted public tunnel key |
+| RunPod Secrets | Tunnel private key, pinned host key, worker storage/database values, SMPL, HF, W&B |
+| VPS `~/.ssh/robomotion_github` | Read-only GitHub repository deploy key |
+
+No secret belongs in Git or in the GPU image.
+
+## Runtime direction
+
+```mermaid
+flowchart LR
+    Browser --> VPS[Server 1 dashboard]
+    VPS --> DB[(PostgreSQL)]
+    VPS --> S3[(MinIO)]
+    VPS -->|RunPod API| Pod[Server 2 GPU Pod]
+    Pod -->|restricted SSH forwards| DB
+    Pod -->|restricted SSH forwards| S3
 ```
 
-Video2Robot is not in this runtime graph. RoboMotion-owned adapters directly import the pinned PromptHMR and GMR installations.
+## Legacy files not used in production
+
+```text
+docker-compose.server.yml
+.env.server
+deploy/prepare-server.sh
+deploy/deploy-server.sh
+gpu-plane/docker-compose.yml
+gpu-plane/.env
+gpu-plane/deploy/up.sh
+```
+
+Video2Robot is not a runtime dependency. RoboMotion directly imports its
+pinned PromptHMR and GMR installations through RoboMotion-owned adapters.

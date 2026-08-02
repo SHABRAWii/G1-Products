@@ -1,77 +1,133 @@
-# Deployment operations
+# VPS + RunPod operations
 
-## Service status and logs
+For initial installation, use the
+[production deployment guide](../system-structure-and-deployment.md).
+
+## Status
+
+Run on Server 1:
 
 ```bash
-bash deploy/server-status.sh
-bash deploy/server-status.sh --follow
+cd /opt/robomotion
+bash control-plane/deploy/status.sh
+curl http://127.0.0.1:3000/api/health
 ```
 
-For a single service:
+Controller logs:
 
 ```bash
-docker compose --env-file .env.server -f docker-compose.server.yml --profile gpu logs -f app
-docker compose --env-file .env.server -f docker-compose.server.yml --profile gpu logs -f gpu-worker
+docker compose --env-file control-plane/.env \
+  -f control-plane/docker-compose.yml \
+  --profile runpod logs -f runpod-controller
 ```
 
-## Restart without deleting data
+MP4 exporter logs:
 
 ```bash
-docker compose --env-file .env.server -f docker-compose.server.yml --profile gpu restart app gpu-worker
+docker compose --env-file control-plane/.env \
+  -f control-plane/docker-compose.yml \
+  logs -f artifact-export-worker
 ```
 
-## Stop and start
+GPU/model/worker logs are shown in the RunPod Pod log view.
+
+## Restart Server 1 without deleting data
 
 ```bash
-docker compose --env-file .env.server -f docker-compose.server.yml --profile gpu down
-bash deploy/deploy-server.sh
+cd /opt/robomotion
+bash control-plane/deploy/up.sh
 ```
 
-`down` without `--volumes` preserves all named volumes. Never add `--volumes` unless permanent data deletion is explicitly intended and verified backups exist.
-
-## Backups
-
-Source code and model installers are reproducible, but jobs and artifacts are not. Back up both PostgreSQL and MinIO.
-
-Create a PostgreSQL dump:
+To stop Server 1:
 
 ```bash
+docker compose --env-file control-plane/.env \
+  -f control-plane/docker-compose.yml \
+  --profile runpod down
+```
+
+Never add `--volumes`.
+
+## Stop Server 2
+
+Stop the Pod from RunPod or let the controller stop it after the idle timeout.
+Do not terminate the Pod and do not delete `/workspace` during routine use.
+
+## Update Server 1
+
+```bash
+cd /opt/robomotion
+git pull --ff-only
+bash control-plane/deploy/up.sh
+curl http://127.0.0.1:3000/api/health
+```
+
+## Update Server 2
+
+1. Build and push a new immutable GPU image.
+2. Put its digest in VPS `control-plane/.env` as `RUNPOD_GPU_IMAGE`.
+3. Run `bash control-plane/deploy/up.sh` on Server 1.
+4. Keep the Pod stopped until the next job.
+
+The controller applies the image while the Pod is stopped. Do not clone or
+`git pull` inside RunPod.
+
+## PostgreSQL backup
+
+Run on Server 1:
+
+```bash
+cd /opt/robomotion
 mkdir -p backups
-docker compose --env-file .env.server -f docker-compose.server.yml exec -T postgres \
-  pg_dump -U robomotion -d robomotion -Fc > "backups/robomotion-$(date +%Y%m%d-%H%M%S).dump"
+docker compose --env-file control-plane/.env \
+  -f control-plane/docker-compose.yml \
+  exec -T postgres pg_dump -U robomotion -d robomotion -Fc \
+  > "backups/robomotion-$(date +%Y%m%d-%H%M%S).dump"
 ```
 
-For MinIO, use an S3-aware backup tool such as `mc mirror` against the internal bucket or snapshot the `minio-data` volume while MinIO is stopped. A raw live copy of MinIO's data directory is not a substitute for a consistent S3 backup.
+## Artifact backup
 
-Keep `.env.server` and `.robomotion/server-secrets/` in a separate encrypted secret backup. Do not place them beside unencrypted database or artifact backups.
+Mirror the `robomotion` bucket to another S3-compatible store with an S3-aware
+tool such as MinIO Client. Do not treat a raw live filesystem copy as a
+consistent object-store backup.
 
-## Restoring to another machine
+Database rows and MinIO object keys are one recovery unit. Back them up on the
+same schedule.
 
-1. Deploy the same or newer RoboMotion commit and stop `app` and `gpu-worker`.
-2. Restore the PostgreSQL dump into the `postgres` service.
-3. Restore the MinIO bucket with its object keys unchanged.
-4. Run `bash deploy/deploy-server.sh` to apply newer migrations and verify models.
-5. Confirm `/api/health`, worker readiness, an old artifact download, and a new short pipeline job.
+Also keep encrypted copies of:
 
-Database rows without their matching MinIO object keys produce broken artifacts. MinIO objects without database lineage remain unreachable from the dashboard. Treat them as one recovery unit.
+```text
+control-plane/.env
+RunPod secret definitions
+the tunnel private key
+the GitHub deploy key
+```
 
-## Model cache behavior
-
-The installer verifies expected PromptHMR files with a local SHA-256 manifest. Valid assets and Python environments are reused. Missing or invalid components are reinstalled individually.
-
-To inspect bootstrap errors:
+## Capacity
 
 ```bash
-docker compose --env-file .env.server -f docker-compose.server.yml --profile gpu logs model-bootstrap
+df -h
+free -h
+docker system df
+docker volume ls
 ```
 
-Do not manually edit files inside `model-cache` or `conda-envs`. If a cache is intentionally rebuilt, preserve PostgreSQL and MinIO and remove only the specific model volumes after documenting the action.
+Do not run:
 
-## Security boundary
+```bash
+docker compose down --volumes
+docker system prune --volumes
+```
 
-- The MVP currently has no authentication or authorization.
-- The dashboard binds to loopback by default.
-- MinIO and PostgreSQL are not published as host ports in the server Compose file.
-- SMPL/SMPL-X credentials are mounted only into `model-bootstrap` as Docker secrets.
-- The application images do not contain `.env.server`, `.robomotion`, or secret files.
-- Add authenticated HTTPS ingress before multi-user or internet access.
+## Recovery order
+
+1. Install Server 1 from the production guide.
+2. Restore `control-plane/.env` securely.
+3. Restore PostgreSQL.
+4. Restore the MinIO bucket with object keys unchanged.
+5. Start Server 1 and apply migrations through `control-plane/deploy/up.sh`.
+6. Recreate the RunPod Pod from the pinned image/template/secrets if needed.
+7. Verify an old artifact and run one short new pipeline job.
+
+The RunPod model and Conda caches are rebuildable. PostgreSQL and MinIO data
+are not.

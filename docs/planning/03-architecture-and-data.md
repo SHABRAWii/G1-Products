@@ -12,7 +12,11 @@ Browser -> Web app / API -> PostgreSQL
                          -> cost collector <- RunPod + providers + storage inventory
 ```
 
-Use a modular monolith for the control plane initially: TypeScript web application and API, PostgreSQL, Redis, S3-compatible object storage, and a durable workflow engine. Keep compute as separate Python container images. This provides a small deployment footprint while preserving service boundaries for future extraction.
+Use a modular monolith for the always-on control plane initially: TypeScript web application and API, PostgreSQL, S3-compatible object storage, the durable persisted state machine, a CPU artifact-export worker, and a RunPod lifecycle controller. Keep PromptHMR, GMR, and training compute in separate GPU-plane images. This provides a small persistent deployment footprint while allowing expensive GPU capacity to wake only for queued compute.
+
+The implementation is organized under `control-plane/` and `gpu-plane/`.
+Interactive scene generation is a GPU task; browser-faithful MP4 capture is an
+asynchronous control-plane derivative and never blocks training.
 
 ### Recommended implementation choices
 

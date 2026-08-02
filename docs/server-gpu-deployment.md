@@ -1,6 +1,6 @@
 # Server GPU deployment
 
-The server stack has one dashboard, PostgreSQL, MinIO, a migration job, a one-time GPU model bootstrap, and one GPU pipeline worker. It uses the same worker and artifact contract as local development.
+The server stack has one dashboard, PostgreSQL, MinIO, a migration job, a one-time GPU model bootstrap, and independent motion and training workers. They use explicit stage capabilities and the same safe artifact contracts as local development.
 
 The worker directly installs PromptHMR and GMR from their own upstream repositories. RoboMotion-owned adapters run pose extraction, SMPL-X conversion, Unitree G1 retargeting, artifact persistence, and rendering.
 
@@ -32,7 +32,7 @@ The complete fresh-machine guide is [deployment/README.md](deployment/README.md)
 
 The same installer is available for a direct machine installation: [install-direct-models.sh](../deploy/install-direct-models.sh). Supply SMPL/SMPL-X credentials through four environment variables or `*_FILE` variables; the script never writes those values to disk.
 
-The worker container waits for `model-bootstrap` to finish successfully. The dashboard is available while models are being prepared, but it will show the GPU worker as unavailable and will not dispatch any jobs prematurely.
+Both worker containers wait for `model-bootstrap` to finish successfully. The dashboard is available while models are being prepared, but it will show the relevant motion or training worker as unavailable and will not dispatch a stage prematurely.
 
 ## PromptHMR quality profile — read before server deployment
 
@@ -94,10 +94,12 @@ The laptop-safe configuration completed a real dashboard job: uploaded video →
 
 ```bash
 docker compose --env-file .env.server -f docker-compose.server.yml ps
-docker compose --env-file .env.server -f docker-compose.server.yml logs -f model-bootstrap gpu-worker
+docker compose --env-file .env.server -f docker-compose.server.yml --profile gpu logs -f model-bootstrap motion-worker training-worker
 ```
 
-The dashboard shows the worker heartbeat as **ready** only after the GPU worker has started and all model environments are present. A job cannot be dispatched before that point.
+The dashboard dispatches a stage only when a fresh **ready** heartbeat advertises
+that exact capability. Training can be assigned to a different GPU using
+`ROBOMOTION_TRAINING_GPU`; long training runs do not occupy the motion worker.
 
 ## Licensing
 

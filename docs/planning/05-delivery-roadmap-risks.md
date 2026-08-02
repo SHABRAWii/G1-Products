@@ -4,6 +4,12 @@
 
 Deploy the web/API and workflow workers as stateless services. Use managed PostgreSQL with backups/PITR, managed Redis, an S3-compatible object store, a secrets manager, and a container registry. Run GPU workloads as isolated RunPod templates with network egress allow-lists where practical. Separate development, staging, and production workspaces, buckets, credentials, rate cards, and RunPod accounts/projects.
 
+The current executable topology is split into an always-on `control-plane/`
+and a wake-on-demand `gpu-plane/`. The control plane owns the dashboard,
+database, storage, background MP4 exporter, and RunPod controller. The GPU plane
+owns only pose, retarget/scene, and training execution. See
+[07-control-and-gpu-plane-split.md](07-control-and-gpu-plane-split.md).
+
 Infrastructure-as-code must create least-privilege identities, private database networking, bucket encryption/lifecycle policy, observability destinations, and alert routes. CI builds immutable adapter images, scans dependencies, runs unit/integration/contract tests, and promotes image digests rather than mutable tags.
 
 ## Phased implementation

@@ -49,6 +49,13 @@ Stage states are `pending`, `ready`, `leased`, `running`, `awaiting_review`, `su
 
 Adapters must distinguish provider-polling work from GPU work. Video generation should persist provider operation IDs and poll from a durable activity; it must not occupy an expensive GPU while waiting for an external API.
 
+Visualization also distinguishes pipeline work from derivative export work.
+The GPU stage completes after publishing the validated interactive scene and
+unchanged robot-motion output. A durable `ArtifactExport` record drives MP4
+capture on the always-on control plane, including progress, stale-claim
+recovery, failure isolation, and retry. Downstream training is prepared in the
+same transaction that queues this export.
+
 ## Validation and safety gates
 
 | Gate | Automatic checks | Human/decision requirement |
