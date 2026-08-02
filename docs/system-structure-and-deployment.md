@@ -320,6 +320,28 @@ Expected health result:
 
 The MVP does not yet have application login. Protect the complete site with
 Nginx basic authentication until application authentication is implemented.
+Never expose Basic Auth over plain HTTP.
+
+If you do not own a domain yet, use a temporary IP-derived `sslip.io` hostname.
+It resolves to the embedded public IP without requiring a DNS account and lets
+Certbot issue a normal browser-trusted certificate. For example, VPS
+`94.16.123.125` uses:
+
+```text
+robomotion.94.16.123.125.sslip.io
+```
+
+Confirm that the temporary hostname resolves to the VPS before continuing:
+
+```bash
+VPS_HOST=94.16.123.125
+TEMP_HOST="robomotion.${VPS_HOST}.sslip.io"
+getent ahostsv4 "$TEMP_HOST"
+```
+
+This hostname is appropriate for a temporary manager preview, but it depends on
+the public `sslip.io` DNS service. Replace it with a domain you control before a
+production launch.
 
 ```bash
 sudo htpasswd -c /etc/nginx/robomotion.htpasswd YOUR_ADMIN_USERNAME
@@ -329,8 +351,9 @@ Create `/etc/nginx/sites-available/robomotion`:
 
 ```nginx
 server {
-    listen 80;
-    server_name dashboard.example.com;
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name robomotion.94.16.123.125.sslip.io 94.16.123.125;
 
     client_max_body_size 10G;
     auth_basic "RoboMotion";
@@ -358,8 +381,28 @@ sudo ln -sfn /etc/nginx/sites-available/robomotion \
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl reload nginx
-sudo certbot --nginx -d dashboard.example.com
-curl -I https://dashboard.example.com
+sudo certbot --nginx --redirect \
+  -d robomotion.94.16.123.125.sslip.io
+curl -I https://robomotion.94.16.123.125.sslip.io
+```
+
+The unauthenticated request must return `401 Unauthorized`; an authenticated
+health request must return `status: ok`:
+
+```bash
+curl -I https://robomotion.94.16.123.125.sslip.io
+curl -u YOUR_ADMIN_USERNAME \
+  https://robomotion.94.16.123.125.sslip.io/api/health
+sudo certbot renew --dry-run
+```
+
+Share the HTTPS hostname and Basic Auth credentials through separate private
+channels. Do not send the password in a public issue, repository file, or chat
+room. Rotate it at any time with:
+
+```bash
+sudo htpasswd /etc/nginx/robomotion.htpasswd YOUR_ADMIN_USERNAME
+sudo systemctl reload nginx
 ```
 
 ## 5. Create the restricted RunPod-to-VPS tunnel
