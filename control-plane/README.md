@@ -57,3 +57,20 @@ The RunPod API key exists only here; GPU workers cannot start, stop, or update
 Pods. The current MVP Compose stack creates one database user and one MinIO
 identity, so the RunPod worker receives those credentials as provider secrets.
 Dedicated scoped worker credentials remain hardening work.
+
+## Automatic branch deployment
+
+Server 1 can poll the deployment branch with its existing read-only GitHub key.
+Only fast-forward updates are accepted. Runtime changes rebuild the control
+plane; documentation-only and GPU-plane-only changes update the checkout
+without restarting services.
+
+```bash
+cd /opt/robomotion
+sudo bash control-plane/deploy/install-auto-deploy.sh
+systemctl list-timers robomotion-control-plane-deploy.timer
+journalctl -u robomotion-control-plane-deploy.service -n 100 --no-pager
+```
+
+The default branch is `mvp/robot-studio` and the default polling interval is
+one minute.

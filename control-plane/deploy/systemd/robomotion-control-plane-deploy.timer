@@ -1,0 +1,13 @@
+[Unit]
+Description=Check GitHub for RoboMotion control-plane updates
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+RandomizedDelaySec=10s
+AccuracySec=5s
+Persistent=true
+Unit=robomotion-control-plane-deploy.service
+
+[Install]
+WantedBy=timers.target

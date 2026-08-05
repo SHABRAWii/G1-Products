@@ -1,0 +1,17 @@
+[Unit]
+Description=RoboMotion control-plane fast-forward deployment
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+ConditionPathIsDirectory=/opt/robomotion/.git
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/robomotion
+ExecStart=/usr/bin/env bash /opt/robomotion/control-plane/deploy/auto-deploy.sh
+TimeoutStartSec=30min
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

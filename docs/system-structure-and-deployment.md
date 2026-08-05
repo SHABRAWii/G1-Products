@@ -636,6 +636,29 @@ Confirm:
 
 ### Update Server 1 code
 
+Recommended: install the automatic fast-forward deployment timer once:
+
+```bash
+cd /opt/robomotion
+sudo bash control-plane/deploy/install-auto-deploy.sh
+systemctl list-timers robomotion-control-plane-deploy.timer
+```
+
+After installation, a push to `mvp/robot-studio` is checked within about one
+minute. Changes to the dashboard, API, database schema, control-plane services,
+or their build configuration run `control-plane/deploy/up.sh`. Documentation
+and GPU-plane-only changes do not restart Server 1. The deployer refuses dirty
+checkouts, non-fast-forward history, and unhealthy deployments.
+
+Inspect or manually trigger it with:
+
+```bash
+sudo systemctl start robomotion-control-plane-deploy.service
+journalctl -u robomotion-control-plane-deploy.service -n 100 --no-pager
+```
+
+Manual fallback:
+
 ```bash
 cd /opt/robomotion
 git pull --ff-only
