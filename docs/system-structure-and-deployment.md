@@ -557,6 +557,18 @@ The entry point automatically:
 
 The first start can take a long time. Later starts verify and reuse the cache.
 
+Tunnel credentials are recreated with mode `0600` under the container-local
+`/run/robomotion-ssh` directory on every start. They are never written to the
+persistent `/workspace` volume. The entry point validates the private key before
+opening the tunnel and permits public-key authentication only; it never falls
+back to a tunnel-user password.
+
+If startup reports `Permission denied (publickey)`, verify that the private key
+stored in `robomotion_control_ssh_key` matches the public key installed in
+`/home/robomotion-tunnel/.ssh/authorized_keys` on Server 1. A message mentioning
+`publickey,password` from an older image is a follow-on symptom of OpenSSH having
+ignored an unsafe key, not evidence that the tunnel user needs a password.
+
 ### 7.3 Create the Pod and record its ID
 
 Deploy one Pod from the template, confirm `/workspace` is mounted, then stop

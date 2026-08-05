@@ -29,6 +29,11 @@ the control VPS, validates/reuses the persistent model runtime, and then starts
 one serialized worker advertising all GPU stages. Persist all of `/workspace`,
 including models and Conda environments.
 
+Only model and environment caches belong on `/workspace`. The entry point
+recreates the tunnel key and known-hosts file under `/run/robomotion-ssh` with
+strict permissions on every container start, validates the private key, and
+uses public-key authentication exclusively.
+
 `runpod-template.example.json` records the required shape. Provider, model,
 database, object-storage, and tunnel credentials are injected as RunPod
 secrets; none belongs in Git. The complete VPS + RunPod procedure is

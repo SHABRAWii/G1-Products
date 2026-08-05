@@ -8,7 +8,11 @@ fail() { printf 'RunPod GPU startup failed: %s\n' "$1" >&2; exit 1; }
 required() { [[ -n "${!1:-}" ]] || fail "$1 is required."; }
 
 WORKSPACE="${ROBOMOTION_RUNPOD_WORKSPACE:-/workspace}"
-SSH_DIR="$WORKSPACE/.ssh"
+# Tunnel credentials are deliberately kept off the persistent RunPod volume.
+# Some provider-backed volume mounts retain or normalize file modes, which can
+# leave a private key as 0666 even after chmod. OpenSSH correctly refuses such
+# a key. /run is container-local, ephemeral, and supports strict Unix modes.
+SSH_DIR="${ROBOMOTION_SSH_DIR:-/run/robomotion-ssh}"
 SSH_KEY="$SSH_DIR/control-plane"
 SSH_KNOWN_HOSTS="$SSH_DIR/known_hosts"
 
@@ -27,18 +31,33 @@ export CONDA_PKGS_DIRS="${CONDA_PKGS_DIRS:-$WORKSPACE/conda-pkgs}"
 export ROBOMOTION_WORKER_ID="${ROBOMOTION_WORKER_ID:-runpod-rtx4090-worker}"
 export ROBOMOTION_WORKER_STAGES="${ROBOMOTION_WORKER_STAGES:-pose_extraction,robot_retargeting,visualization,training}"
 
-mkdir -p "$SSH_DIR" "$ROBOMOTION_MODEL_ROOT" "$ROBOMOTION_MODEL_CACHE" \
+mkdir -p "$ROBOMOTION_MODEL_ROOT" "$ROBOMOTION_MODEL_CACHE" \
   "$CONDA_ENVS_PATH" "$CONDA_PKGS_DIRS"
-chmod 700 "$SSH_DIR"
+
+umask 077
+install -d -m 700 "$SSH_DIR"
+install -m 600 /dev/null "$SSH_KEY"
+install -m 600 /dev/null "$SSH_KNOWN_HOSTS"
 printf '%s\n' "$ROBOMOTION_CONTROL_SSH_KEY" > "$SSH_KEY"
 printf '%s\n' "$ROBOMOTION_CONTROL_SSH_KNOWN_HOSTS" > "$SSH_KNOWN_HOSTS"
 chmod 600 "$SSH_KEY" "$SSH_KNOWN_HOSTS"
+
+[[ "$(stat -c '%a' "$SSH_KEY")" == "600" ]] || \
+  fail "The control-plane SSH private key does not have mode 0600."
+[[ "$(stat -c '%a' "$SSH_KNOWN_HOSTS")" == "600" ]] || \
+  fail "The control-plane known-hosts file does not have mode 0600."
+ssh-keygen -y -f "$SSH_KEY" >/dev/null 2>&1 || \
+  fail "ROBOMOTION_CONTROL_SSH_KEY is not a valid unencrypted OpenSSH private key."
 
 ssh -NT \
   -i "$SSH_KEY" \
   -o BatchMode=yes \
   -o ExitOnForwardFailure=yes \
   -o IdentitiesOnly=yes \
+  -o PubkeyAuthentication=yes \
+  -o PreferredAuthentications=publickey \
+  -o PasswordAuthentication=no \
+  -o KbdInteractiveAuthentication=no \
   -o ServerAliveInterval=30 \
   -o ServerAliveCountMax=3 \
   -o StrictHostKeyChecking=yes \
