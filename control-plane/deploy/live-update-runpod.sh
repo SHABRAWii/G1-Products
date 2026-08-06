@@ -47,9 +47,14 @@ worker_script = f'''set -euo pipefail
 {update_source}
 
 PHMR_ENV=/workspace/conda-envs/phmr_pt2.4
-PHMR_SOURCE=/workspace/robomotion/sources/PromptHMR/python_libs/chumpy
 if ! "$PHMR_ENV/bin/python" -c 'import chumpy, smplx' >/dev/null 2>&1; then
-  [[ -d "$PHMR_SOURCE" ]] || {{ echo "PromptHMR chumpy source is missing: $PHMR_SOURCE" >&2; exit 1; }}
+  PHMR_SOURCE=''
+  for candidate in \
+    /opt/prompt-hmr/python_libs/chumpy \
+    /workspace/robomotion/sources/PromptHMR/python_libs/chumpy; do
+    if [[ -d "$candidate" ]]; then PHMR_SOURCE="$candidate"; break; fi
+  done
+  [[ -n "$PHMR_SOURCE" ]] || {{ echo "PromptHMR chumpy source is missing from the image and persistent cache." >&2; exit 1; }}
   "$PHMR_ENV/bin/python" -m pip install -e "$PHMR_SOURCE" --no-build-isolation
 fi
 
