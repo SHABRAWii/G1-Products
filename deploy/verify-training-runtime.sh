@@ -22,7 +22,7 @@ import os
 import torch, mjlab, scipy, mujoco, warp, src
 from src.tasks.tracking.rl.runner import MotionTrackingOnPolicyRunner
 assert torch.__version__.startswith("2.12."), torch.__version__
-assert torch.version.cuda == "13.0", torch.version.cuda
+assert torch.version.cuda == "12.6", torch.version.cuda
 source = Path(src.__file__).resolve()
 root = Path(os.environ["ROBOMOTION_VERIFY_TRAIN_ROOT"]).resolve()
 assert source.is_relative_to(root), (source, root)

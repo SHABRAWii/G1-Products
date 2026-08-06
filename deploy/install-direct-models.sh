@@ -212,7 +212,7 @@ install_train_cpp_runtime() {
 # leaving this to a plain `pip install -e .` risks resolving a different
 # torch/CUDA build on a future install; pinning it explicitly first (same
 # pattern as install_pytorch below for PromptHMR) keeps it reproducible.
-install_train_pytorch() { robomotion_training_exec -m pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cu130; }
+install_train_pytorch() { robomotion_training_exec -m pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cu126; }
 install_unitree_rl_mjlab() { robomotion_training_exec -m pip install -e "$TRAIN_DIR"; }
 
 install_prompthmr_base() {
@@ -372,7 +372,7 @@ if ! train_patch_applied; then run_stage "Applying RoboMotion training patch" "s
 if conda_environment_exists "$TRAIN_ENV" && conda run -n "$TRAIN_ENV" python -m pip --version >/dev/null 2>&1; then cached_stage "training environment" "Python 3.11 and pip in $TRAIN_ENV"; else run_stage "Preparing training environment" "Python 3.11 and pip in $TRAIN_ENV" install_train_base; fi
 robomotion_configure_training_runtime "$TRAIN_ENV" || fail "Unable to resolve the $TRAIN_ENV Conda environment."
 if ! robomotion_training_cpp_runtime_ready; then run_stage "Installing training C++ runtime" "Conda-owned libstdc++ with the CXXABI required by mjlab and ICU" install_train_cpp_runtime; else cached_stage "training C++ runtime" "Conda libstdc++ provides CXXABI_1.3.15"; fi
-if ! robomotion_training_exec -c 'import torch; assert torch.__version__.startswith("2.12."); assert torch.version.cuda == "13.0"' >/dev/null 2>&1; then run_stage "Installing PyTorch CUDA 13.0" "Pinned, locally verified torch 2.12 CUDA 13.0 runtime" install_train_pytorch; else cached_stage "PyTorch CUDA 13.0" "Installed torch 2.12 and CUDA 13.0 contract passed"; fi
+if ! robomotion_training_exec -c 'import torch; assert torch.__version__.startswith("2.12."); assert torch.version.cuda == "12.6"' >/dev/null 2>&1; then run_stage "Installing PyTorch CUDA 12.6" "Pinned torch 2.12 CUDA 12.6 runtime for RunPod driver compatibility" install_train_pytorch; else cached_stage "PyTorch CUDA 12.6" "Installed torch 2.12 and CUDA 12.6 contract passed"; fi
 if ! robomotion_training_exec -c 'import mjlab' >/dev/null 2>&1; then run_stage "Installing unitree_rl_mjlab" "mjlab and its full dependency closure (verified: torch, rsl-rl-lib, wandb, tyro, tensorboard, trimesh, viser, and more)" install_unitree_rl_mjlab; else cached_stage "unitree_rl_mjlab" "Direct mjlab import passed"; fi
 if conda_environment_exists "$PHMR_ENV" && conda run -n "$PHMR_ENV" python -m pip --version >/dev/null 2>&1; then cached_stage "PromptHMR environment" "Python 3.11 and pip in $PHMR_ENV"; else run_stage "Preparing PromptHMR environment" "Python 3.11 and pip in $PHMR_ENV" install_prompthmr_base; fi
 if ! conda run -n "$PHMR_ENV" python -c 'import torch; assert torch.__version__.startswith("2.4.")' >/dev/null 2>&1; then run_stage "Installing PyTorch CUDA 12.1" "Large GPU package download; this can take several minutes" install_pytorch; else cached_stage "PyTorch CUDA 12.1" "Installed version and CUDA wheel contract passed"; fi

@@ -50,8 +50,8 @@ if $NEEDS_TRAINING; then
     || fail "The $TRAIN_ENV training environment cannot be resolved."
   robomotion_training_cpp_runtime_ready \
     || fail "The training environment libstdc++ does not provide CXXABI_1.3.15."
-  robomotion_training_exec -c 'import mjlab, torch; assert torch.__version__.startswith("2.12."); assert torch.version.cuda == "13.0"' \
-    || fail "Training environment is unavailable or does not match the verified torch 2.12/CUDA 13.0 contract."
+  robomotion_training_exec -c 'import mjlab, torch; assert torch.__version__.startswith("2.12."); assert torch.version.cuda == "12.6"' \
+    || fail "Training environment is unavailable or does not match the verified torch 2.12/CUDA 12.6 contract."
   bash /app/deploy/verify-training-runtime.sh \
     || fail "The deterministic training runtime verification failed."
 fi

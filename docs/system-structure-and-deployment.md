@@ -46,8 +46,8 @@ digital-twin work, and initial policy training. RoboMotion advertises all GPU
 capabilities from one worker and executes them sequentially so model stages do
 not fight over one GPU.
 
-Use a CUDA 13-compatible RunPod host because the pinned training runtime uses
-PyTorch CUDA 13. PromptHMR keeps its own verified CUDA 12.1 environment.
+Use a CUDA 12-compatible RunPod host because the pinned training runtime uses
+PyTorch CUDA 12.6. PromptHMR keeps its own verified CUDA 12.1 environment.
 Reduce training environment count or batch size if a recipe exceeds GPU
 memory. A 48/80 GB GPU is an upgrade path, not a current requirement.
 
@@ -544,11 +544,11 @@ Start command: bash deploy/start-runpod-gpu-plane.sh
 Worker stages: pose_extraction,robot_retargeting,visualization,training
 ```
 
-Choose a CUDA 13-compatible host. A network volume is preferable when the
+Choose a CUDA 12-compatible host. A network volume is preferable when the
 selected region/GPU supports it. Otherwise keep the same Pod and stop it; do
 not terminate it or delete its volume.
 
-The production image is based on NVIDIA CUDA 13.0.2. During bootstrap, the
+The production image is based on NVIDIA CUDA 12.6.3. During bootstrap, the
 installer verifies that the persistent `unitree_rl_mjlab` environment contains
 its own `libstdc++` with `CXXABI_1.3.15`, installing the pinned-compatible
 Conda runtime only when missing. Training processes use that library path;

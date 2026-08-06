@@ -28,12 +28,14 @@ class StageContractTests(unittest.TestCase):
             "/workspace/conda-envs/unitree_rl_mjlab/lib:/usr/local/cuda/lib64",
         )
 
-    def test_runpod_runtime_contract_uses_cuda_13_and_ipv4_tunnels(self):
+    def test_runpod_runtime_contract_uses_cuda_12_6_and_ipv4_tunnels(self):
         dockerfile = (ROOT / "deploy" / "Dockerfile.gpu-worker").read_text()
         startup = (ROOT / "deploy" / "start-runpod-gpu-plane.sh").read_text()
         installer = (ROOT / "deploy" / "install-direct-models.sh").read_text()
         local_worker = (ROOT / "scripts" / "start-local-worker.sh").read_text()
-        self.assertIn("nvidia/cuda:13.0.2-runtime-ubuntu22.04", dockerfile)
+        self.assertIn("nvidia/cuda:12.6.3-runtime-ubuntu22.04", dockerfile)
+        self.assertIn("https://download.pytorch.org/whl/cu126", installer)
+        self.assertNotIn("https://download.pytorch.org/whl/cu130", installer)
         for port in (15432, 19000, 13000):
             self.assertIn(f"-L 127.0.0.1:{port}:127.0.0.1:", startup)
         self.assertIn("libstdcxx-ng>=14", installer)

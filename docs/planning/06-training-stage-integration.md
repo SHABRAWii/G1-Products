@@ -102,13 +102,13 @@ durable checkpoints are copied into the stage work directory before cleanup.
 best-checkpoint behavior required by this integration without modifying the
 upstream checkout by hand.
 
-The installer uses the locally verified `torch==2.12.0` CUDA 13.0 wheel and
+The installer uses the pinned `torch==2.12.0` CUDA 12.6 wheel and
 the `unitree_rl_mjlab` Conda environment. Both installation and training-worker
 startup run `deploy/verify-training-runtime.sh`, which verifies:
 
 - the exact source commit;
 - a clean reverse check of the applied patch;
-- torch 2.12 and CUDA 13.0;
+- torch 2.12 and CUDA 12.6;
 - imports for mjlab, SciPy, MuJoCo, and Warp;
 - that Python resolves the pinned source tree rather than a stale editable
   install;
