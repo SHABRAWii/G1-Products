@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  compactTrainingReport,
   completeTrainingTelemetry,
   createTrainingTelemetry,
   ingestTrainingLog,
@@ -35,4 +36,20 @@ test("best reward is retained and completion is distinct from evaluation", () =>
   assert.deepEqual(telemetry.best, { iteration: 0, meanReward: -2 });
   assert.equal(telemetry.outcome, "COMPLETED");
   assert.equal(telemetry.qualityStatus, "EVALUATION_PENDING");
+});
+
+test("large training histories are compacted for transactional persistence", () => {
+  const history = Array.from({ length: 3000 }, (_, iteration) => ({ iteration, meanReward: iteration / 10 }));
+  const compact = compactTrainingReport({
+    schemaVersion: "training.metrics/v1",
+    history,
+    latest: history.at(-1),
+    best: history.at(-1),
+    ignoredLargeField: "x".repeat(10_000),
+  }) as Record<string, unknown>;
+  assert.ok(Array.isArray(compact.history));
+  assert.ok((compact.history as unknown[]).length <= 241);
+  assert.equal(compact.historySampledFrom, 3000);
+  assert.equal(compact.ignoredLargeField, undefined);
+  assert.deepEqual(compact.latest, history.at(-1));
 });

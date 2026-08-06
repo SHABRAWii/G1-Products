@@ -9,6 +9,7 @@ import { completeStage, dispatchNextStage, failStage } from "@/lib/orchestration
 import { executablePipelineStages } from "@/lib/worker-capabilities";
 import { normalizeTrainingStageConfig } from "@/lib/training-config";
 import {
+  compactTrainingReport,
   completeTrainingTelemetry,
   createTrainingTelemetry,
   ingestTrainingLog,
@@ -33,6 +34,18 @@ type WorkerTrainingConfig = {
   report?: Record<string, unknown>;
 };
 type WorkerManifest = { summary?: string; outputs: WorkerOutput[]; training?: WorkerTrainingConfig };
+
+function completionCanRetry(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Transaction already closed")
+    || message.includes("expired transaction")
+    || message.includes("P2028")
+    || message.includes("Timed out fetching a new connection");
+}
+
+async function pause(milliseconds: number) {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 const executableStages = new Set<PrismaPipelineStage>(executablePipelineStages);
 
@@ -218,19 +231,33 @@ async function executeStage(stageId: string, signal?: AbortSignal) {
     if (manifest.training && trainingTelemetry) {
       manifest.training.telemetry = completeTrainingTelemetry(trainingTelemetry, true);
     }
-    const completion = await completeStage(
-      stage.jobId,
-      stage.id,
-      {
-        worker: "local-pipeline-worker",
-        summary: manifest.summary ?? "Stage completed.",
-        logs,
-        outputCount: outputs.length,
-        ...(manifest.training ? { training: manifest.training.report ?? manifest.training.telemetry } : {}),
-      },
-      outputs,
-      manifest.training ? { training: manifest.training } : undefined,
-    );
+    const persistedResult = {
+      worker: "local-pipeline-worker",
+      summary: manifest.summary ?? "Stage completed.",
+      logs,
+      outputCount: outputs.length,
+      ...(manifest.training
+        ? { training: compactTrainingReport(manifest.training.report ?? manifest.training.telemetry) }
+        : {}),
+    };
+    let completion: Awaited<ReturnType<typeof completeStage>> | undefined;
+    for (let completionAttempt = 1; completionAttempt <= 3; completionAttempt += 1) {
+      try {
+        completion = await completeStage(
+          stage.jobId,
+          stage.id,
+          persistedResult,
+          outputs,
+          manifest.training ? { training: manifest.training } : undefined,
+        );
+        break;
+      } catch (error) {
+        if (!completionCanRetry(error) || completionAttempt === 3) throw error;
+        scheduleProgress(`Stage outputs are safe; retrying database finalization (${completionAttempt}/3).`);
+        await pause(completionAttempt * 500);
+      }
+    }
+    if (!completion) throw new Error("Stage output finalization did not return a result.");
     // Keep the pipeline moving after an approved review.  Do not auto-dispatch
     // future non-worker stages (evaluation/simulation), because they
     // intentionally do not have a local implementation yet.

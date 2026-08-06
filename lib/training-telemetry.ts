@@ -101,3 +101,51 @@ export function completeTrainingTelemetry(telemetry: TrainingTelemetry, succeede
   if (succeeded) telemetry.progress = 1;
   return telemetry;
 }
+
+const persistedHistoryLimit = 240;
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+/**
+ * Keep the dashboard-facing training summary small enough for transactional
+ * stage finalization. The complete, per-iteration report remains available as
+ * the training-metrics.json artifact; PostgreSQL only needs a representative
+ * learning curve plus the final and best measurements.
+ */
+export function compactTrainingReport(value: unknown) {
+  const report = objectValue(value);
+  const history = Array.isArray(report.history) ? report.history : [];
+  const stride = Math.max(1, Math.ceil(history.length / persistedHistoryLimit));
+  const sampledHistory = stride === 1
+    ? history
+    : history.filter((_point, index) => index % stride === 0 || index === history.length - 1);
+  const selectedKeys = [
+    "schemaVersion",
+    "currentIteration",
+    "totalIterations",
+    "progress",
+    "latest",
+    "best",
+    "completedIterations",
+    "checkpointInterval",
+    "bestSavedCheckpoint",
+    "bestSavedIteration",
+    "bestSavedMeanReward",
+    "executionCompleted",
+    "outcome",
+    "qualityStatus",
+    "evaluation",
+    "dominantTermination",
+  ] as const;
+  const compact: Record<string, unknown> = {};
+  for (const key of selectedKeys) {
+    if (report[key] !== undefined) compact[key] = report[key];
+  }
+  if (sampledHistory.length) compact.history = sampledHistory;
+  compact.historySampledFrom = history.length;
+  return compact;
+}

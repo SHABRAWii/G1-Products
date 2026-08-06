@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { recordJobEvent } from "@/lib/events";
 import { createHash } from "node:crypto";
 import { normalizeTrainingStageConfig } from "@/lib/training-config";
+import { compactTrainingReport } from "@/lib/training-telemetry";
 import { queueDigitalTwinExport } from "@/lib/artifact-exports";
 
 type Database = Prisma.TransactionClient | typeof prisma;
@@ -111,7 +112,7 @@ export async function dispatchNextStage(jobId: string) {
 }
 
 type OutputArtifact = { assetVersionId: string; role: StageArtifactRole };
-type TrainingCompletion = {
+export type TrainingCompletion = {
   algorithm: string;
   task: string;
   robot: string;
@@ -206,6 +207,21 @@ async function recordSuccessfulTraining(
     checkpointAssetVersionId: string;
   },
 ) {
+  const persistedTraining = {
+    algorithm: input.training.algorithm,
+    task: input.training.task,
+    robot: input.training.robot,
+    numEnvs: input.training.numEnvs,
+    maxIterations: input.training.maxIterations,
+    outputFps: input.training.outputFps,
+    experimentName: input.training.experimentName,
+    captureTrainingVideos: input.training.captureTrainingVideos ?? false,
+    videoIntervalSteps: input.training.videoIntervalSteps,
+    videoLengthSteps: input.training.videoLengthSteps,
+    videoWidth: input.training.videoWidth,
+    videoHeight: input.training.videoHeight,
+    report: compactTrainingReport(input.training.report ?? input.training.telemetry),
+  };
   const recipeConfig = {
     algorithm: input.training.algorithm,
     task: input.training.task,
@@ -241,7 +257,7 @@ async function recordSuccessfulTraining(
   const metrics = {
     checkpointAssetVersionId: input.checkpointAssetVersionId,
     jobId: input.jobId,
-    ...input.training,
+    ...persistedTraining,
   };
   const policyVersion = await tx.policyVersion.create({
     data: {
@@ -286,9 +302,17 @@ export async function completeStage(
     const stage = await tx.jobStage.findFirst({ where: { id: stageId, jobId }, include: { job: { select: { workspaceId: true, name: true, robotModel: true } } } });
     if (!stage) throw new OrchestrationError("Stage was not found for this job.", 404);
     if (stage.status !== StageStatus.RUNNING) throw new OrchestrationError("Only a running stage can be completed.");
-    for (const output of outputs) {
-      const version = await tx.assetVersion.findFirst({ where: { id: output.assetVersionId, asset: { workspaceId: stage.job.workspaceId } } });
-      if (!version) throw new OrchestrationError("An output artifact was not found in this workspace.", 400);
+    const outputAssetVersionIds = [...new Set(outputs.map((output) => output.assetVersionId))];
+    if (outputAssetVersionIds.length) {
+      const validOutputs = await tx.assetVersion.count({
+        where: {
+          id: { in: outputAssetVersionIds },
+          asset: { workspaceId: stage.job.workspaceId },
+        },
+      });
+      if (validOutputs !== outputAssetVersionIds.length) {
+        throw new OrchestrationError("An output artifact was not found in this workspace.", 400);
+      }
     }
     if (outputs.length) await tx.stageArtifact.createMany({ data: outputs.map((output) => ({ jobStageId: stageId, assetVersionId: output.assetVersionId, role: output.role })), skipDuplicates: true });
     if (stage.stage === PipelineStage.VISUALIZATION) {
@@ -344,7 +368,7 @@ export async function completeStage(
       : { recorded: false, runtimeSeconds: 0, reason: "No active attempt was found." };
     const next = await finishStageAndPrepareNext(tx, jobId, stageId, outputs.filter((output) => output.role === StageArtifactRole.OUTPUT).map((output) => output.assetVersionId));
     return { jobId, stageId, usage, ...next };
-  });
+  }, { maxWait: 10_000, timeout: 30_000 });
 }
 
 export async function failStage(jobId: string, stageId: string, input: { retryable: boolean; errorCode?: string; message?: string; logs?: string[]; worker?: string }) {
