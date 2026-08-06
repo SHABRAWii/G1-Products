@@ -63,6 +63,10 @@ export function deserializeWorkerDetail(detail: string | null) {
     }
     return { capabilities: parseWorkerStages(parsed.capabilities.join(",")), error: parsed.error ?? null, gpu: parsed.gpu ?? null };
   } catch {
-    return { capabilities: new Set<PipelineStage>(executablePipelineStages), error: detail, gpu: null };
+    return {
+      capabilities: new Set<PipelineStage>(),
+      error: detail || "Worker detail is malformed.",
+      gpu: null,
+    };
   }
 }

@@ -13,14 +13,39 @@ function manifestFromResult(result: unknown): TrainingManifest | null {
   if (!result || typeof result !== "object") return null;
   const logs = (result as { logs?: unknown }).logs;
   if (!Array.isArray(logs)) return null;
-  for (const item of [...logs].reverse()) {
-    if (typeof item !== "string" || !item.trimStart().startsWith("{")) continue;
-    try {
-      const candidate = JSON.parse(item) as TrainingManifest;
-      if (candidate.stage === "training" && candidate.training) return candidate;
-    } catch {
-      // Ordinary training log lines can start with braces; only a valid stage
-      // manifest is useful for recovery.
+
+  // Long adapter manifests are persisted in 64 KiB progress chunks. Rebuild
+  // the original stream before looking for the final JSON object; parsing each
+  // array element independently loses any manifest larger than one chunk.
+  const stream = logs.filter((item): item is string => typeof item === "string").join("");
+  const starts = [...stream.matchAll(/\{\s*"stage"\s*:\s*"training"/g)]
+    .map((match) => match.index ?? -1)
+    .filter((index) => index >= 0)
+    .reverse();
+  for (const start of starts) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < stream.length; index += 1) {
+      const character = stream[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') inString = true;
+      else if (character === "{") depth += 1;
+      else if (character === "}") {
+        depth -= 1;
+        if (depth !== 0) continue;
+        try {
+          const candidate = JSON.parse(stream.slice(start, index + 1)) as TrainingManifest;
+          if (candidate.stage === "training" && candidate.training) return candidate;
+        } catch {
+          break;
+        }
+      }
     }
   }
   return null;

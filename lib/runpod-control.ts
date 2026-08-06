@@ -63,7 +63,12 @@ export async function getRunPodSnapshot() {
     prisma.workerHeartbeat.findFirst({
       where: {
         workerId: { notIn: [controllerId, "runpod-manual-control"] },
-        detail: { contains: "capabilities" },
+        OR: [
+          { detail: { contains: "pose_extraction" } },
+          { detail: { contains: "robot_retargeting" } },
+          { detail: { contains: "visualization" } },
+          { detail: { contains: "training" } },
+        ],
       },
       orderBy: { lastSeenAt: "desc" },
     }),
