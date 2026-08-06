@@ -36,6 +36,14 @@ uses public-key authentication exclusively. This runtime path is intentionally
 not configurable; any stale `ROBOMOTION_SSH_DIR` template variable is ignored,
 and credential files left by older images are removed from `/workspace/.ssh`.
 
+The worker image and the pinned training wheel both use CUDA 13.0. The
+`unitree_rl_mjlab` Conda environment also owns its `libstdc++`/`libgcc`
+runtime; training commands prepend that environment's library directory only
+for the lifetime of the command. This prevents ICU/`CXXABI_1.3.15` failures
+without leaking the training ABI into PromptHMR or GMR. Tunnel listeners bind
+to `127.0.0.1` explicitly, so Pods with IPv6 disabled do not emit `::1` bind
+warnings.
+
 `runpod-template.example.json` records the required shape. Provider, model,
 database, object-storage, and tunnel credentials are injected as RunPod
 secrets; none belongs in Git. The complete VPS + RunPod procedure is

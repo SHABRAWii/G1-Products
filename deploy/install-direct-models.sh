@@ -19,6 +19,7 @@ GMR_REF="${ROBOMOTION_GMR_REF:-069b4fd48f440e813b2b4d69255c70f53e5f83fb}"
 TRAIN_REF="${ROBOMOTION_TRAIN_REF:-1425b15f73bd4095f0df53709d7c389c3eb9e790}"
 TRAIN_DIR="${ROBOMOTION_TRAIN_ROOT:-$SOURCE_ROOT/unitree_rl_mjlab}"
 TRAIN_PATCH="$PROJECT_ROOT/deploy/patches/unitree_rl_mjlab-robomotion.patch"
+source "$PROJECT_ROOT/deploy/training-runtime-common.sh"
 LOG_DIR="$MODEL_ROOT/install-logs"
 CHECKPOINT_MARKER="$MODEL_CACHE/prompthmr-data/.robomotion-checkpoints-v1"
 CHECKSUM_MANIFEST="$MODEL_CACHE/prompthmr-data/.robomotion-checksums-v1.sha256"
@@ -201,13 +202,18 @@ install_train_base() {
   conda_environment_exists "$TRAIN_ENV" || fail "Conda did not create $TRAIN_ENV."
   if ! conda run -n "$TRAIN_ENV" python -m pip --version >/dev/null 2>&1; then conda run -n "$TRAIN_ENV" python -m ensurepip --upgrade; fi
 }
+install_train_cpp_runtime() {
+  conda install -n "$TRAIN_ENV" -c conda-forge -y 'libstdcxx-ng>=14' 'libgcc-ng>=14'
+  robomotion_configure_training_runtime "$TRAIN_ENV"
+  robomotion_training_cpp_runtime_ready || fail "$TRAIN_ENV does not provide CXXABI_1.3.15 after installing its C++ runtime."
+}
 # Pinned to the exact CUDA build verified against this project's training
 # stage. mjlab's own bare `torch>=2.7.0` requirement has no default index, so
 # leaving this to a plain `pip install -e .` risks resolving a different
 # torch/CUDA build on a future install; pinning it explicitly first (same
 # pattern as install_pytorch below for PromptHMR) keeps it reproducible.
-install_train_pytorch() { conda run -n "$TRAIN_ENV" python -m pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cu130; }
-install_unitree_rl_mjlab() { conda run -n "$TRAIN_ENV" python -m pip install -e "$TRAIN_DIR"; }
+install_train_pytorch() { robomotion_training_exec -m pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cu130; }
+install_unitree_rl_mjlab() { robomotion_training_exec -m pip install -e "$TRAIN_DIR"; }
 
 install_prompthmr_base() {
   if ! conda_environment_exists "$PHMR_ENV"; then conda create -n "$PHMR_ENV" python=3.11.9 -c conda-forge -y; fi
@@ -342,7 +348,7 @@ download_body_support_assets() {
   fi
   body_support_assets_downloaded || fail "PromptHMR body-model support assets are incomplete after the public download attempt."
 }
-validate_installation() { ln -sfn "$PHMR_DIR/data/body_models/smplx" "$GMR_DIR/assets/body_models/smplx"; conda run -n "$GMR_ENV" python -c 'import general_motion_retargeting'; (cd "$PHMR_DIR" && conda run -n "$PHMR_ENV" python -c 'from pipeline.pipeline import Pipeline'); conda run -n "$TRAIN_ENV" python -c 'import mjlab'; [[ -f "$TRAIN_DIR/scripts/train.py" ]] || fail "unitree_rl_mjlab source is incomplete."; }
+validate_installation() { ln -sfn "$PHMR_DIR/data/body_models/smplx" "$GMR_DIR/assets/body_models/smplx"; conda run -n "$GMR_ENV" python -c 'import general_motion_retargeting'; (cd "$PHMR_DIR" && conda run -n "$PHMR_ENV" python -c 'from pipeline.pipeline import Pipeline'); robomotion_training_exec -c 'import mjlab'; [[ -f "$TRAIN_DIR/scripts/train.py" ]] || fail "unitree_rl_mjlab source is incomplete."; }
 verify_training_runtime() {
   ROBOMOTION_TRAIN_ROOT="$TRAIN_DIR" \
   ROBOMOTION_TRAIN_ENV="$TRAIN_ENV" \
@@ -364,8 +370,10 @@ if ! conda run -n "$GMR_ENV" python -c 'import general_motion_retargeting' >/dev
 if ! conda run -n "$GMR_ENV" python -c 'import pyrender, trimesh; assert pyrender.__version__ == "0.1.45"; assert trimesh.__version__ == "4.10.0"' >/dev/null 2>&1; then run_stage "Installing digital-twin renderer" "Exact Unitree STL rendering for MP4 evidence" install_digital_twin_renderer; else cached_stage "digital-twin renderer" "Exact STL renderer imports and pinned versions passed"; fi
 if ! train_patch_applied; then run_stage "Applying RoboMotion training patch" "setup.py dependency fix plus best-checkpoint tracking, on top of the pinned commit" apply_train_patch; else cached_stage "RoboMotion training patch" "Patch already applied to the pinned checkout"; fi
 if conda_environment_exists "$TRAIN_ENV" && conda run -n "$TRAIN_ENV" python -m pip --version >/dev/null 2>&1; then cached_stage "training environment" "Python 3.11 and pip in $TRAIN_ENV"; else run_stage "Preparing training environment" "Python 3.11 and pip in $TRAIN_ENV" install_train_base; fi
-if ! conda run -n "$TRAIN_ENV" python -c 'import torch; assert torch.__version__.startswith("2.12."); assert torch.version.cuda == "13.0"' >/dev/null 2>&1; then run_stage "Installing PyTorch CUDA 13.0" "Pinned, locally verified torch 2.12 CUDA 13.0 runtime" install_train_pytorch; else cached_stage "PyTorch CUDA 13.0" "Installed torch 2.12 and CUDA 13.0 contract passed"; fi
-if ! conda run -n "$TRAIN_ENV" python -c 'import mjlab' >/dev/null 2>&1; then run_stage "Installing unitree_rl_mjlab" "mjlab and its full dependency closure (verified: torch, rsl-rl-lib, wandb, tyro, tensorboard, trimesh, viser, and more)" install_unitree_rl_mjlab; else cached_stage "unitree_rl_mjlab" "Direct mjlab import passed"; fi
+robomotion_configure_training_runtime "$TRAIN_ENV" || fail "Unable to resolve the $TRAIN_ENV Conda environment."
+if ! robomotion_training_cpp_runtime_ready; then run_stage "Installing training C++ runtime" "Conda-owned libstdc++ with the CXXABI required by mjlab and ICU" install_train_cpp_runtime; else cached_stage "training C++ runtime" "Conda libstdc++ provides CXXABI_1.3.15"; fi
+if ! robomotion_training_exec -c 'import torch; assert torch.__version__.startswith("2.12."); assert torch.version.cuda == "13.0"' >/dev/null 2>&1; then run_stage "Installing PyTorch CUDA 13.0" "Pinned, locally verified torch 2.12 CUDA 13.0 runtime" install_train_pytorch; else cached_stage "PyTorch CUDA 13.0" "Installed torch 2.12 and CUDA 13.0 contract passed"; fi
+if ! robomotion_training_exec -c 'import mjlab' >/dev/null 2>&1; then run_stage "Installing unitree_rl_mjlab" "mjlab and its full dependency closure (verified: torch, rsl-rl-lib, wandb, tyro, tensorboard, trimesh, viser, and more)" install_unitree_rl_mjlab; else cached_stage "unitree_rl_mjlab" "Direct mjlab import passed"; fi
 if conda_environment_exists "$PHMR_ENV" && conda run -n "$PHMR_ENV" python -m pip --version >/dev/null 2>&1; then cached_stage "PromptHMR environment" "Python 3.11 and pip in $PHMR_ENV"; else run_stage "Preparing PromptHMR environment" "Python 3.11 and pip in $PHMR_ENV" install_prompthmr_base; fi
 if ! conda run -n "$PHMR_ENV" python -c 'import torch; assert torch.__version__.startswith("2.4.")' >/dev/null 2>&1; then run_stage "Installing PyTorch CUDA 12.1" "Large GPU package download; this can take several minutes" install_pytorch; else cached_stage "PyTorch CUDA 12.1" "Installed version and CUDA wheel contract passed"; fi
 if ! conda run -n "$PHMR_ENV" python -c 'import torch_scatter' >/dev/null 2>&1; then run_stage "Installing torch-scatter" "GPU geometry operator for PromptHMR" install_torch_scatter; else cached_stage "torch-scatter" "GPU geometry operator import passed"; fi

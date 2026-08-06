@@ -25,6 +25,15 @@ case "${1:-motion}" in
   training)
     export ROBOMOTION_WORKER_ID="${ROBOMOTION_WORKER_ID:-local-pipeline-worker-training}"
     export ROBOMOTION_WORKER_STAGES="${ROBOMOTION_WORKER_STAGES:-training}"
+    # Resolve the direct environment Python and its Conda-owned C++ runtime.
+    # Keeping this scoped in ROBOMOTION_TRAIN_LIBRARY_PATH prevents the
+    # training ABI from affecting the Node process or motion environments.
+    # shellcheck disable=SC1091
+    source "$PROJECT_ROOT/deploy/training-runtime-common.sh"
+    robomotion_configure_training_runtime "${ROBOMOTION_TRAIN_ENV:-unitree_rl_mjlab}" "${ROBOMOTION_TRAIN_PYTHON:-}" \
+      || { printf 'Training environment could not be resolved. Run deploy/install-direct-models.sh first.\n' >&2; exit 1; }
+    robomotion_training_cpp_runtime_ready \
+      || { printf 'Training C++ runtime is incomplete. Run deploy/install-direct-models.sh to repair it.\n' >&2; exit 1; }
     ;;
   *) printf 'Usage: %s [motion|training]\n' "$0" >&2; exit 2 ;;
 esac

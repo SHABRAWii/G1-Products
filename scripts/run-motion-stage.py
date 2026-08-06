@@ -79,6 +79,21 @@ def training_python(args: argparse.Namespace, script: Path, arguments: list[str]
     return conda_python(args.training_env, script, arguments)
 
 
+def training_runtime_environment(args: argparse.Namespace) -> dict[str, str]:
+    """Use mjlab's Conda-owned C++ ABI without contaminating other stages."""
+    library_path = os.environ.get("ROBOMOTION_TRAIN_LIBRARY_PATH", "")
+    if not library_path and args.training_python:
+        library_path = str(Path(args.training_python).expanduser().resolve().parent.parent / "lib")
+    if not library_path:
+        raise RuntimeError("ROBOMOTION_TRAIN_LIBRARY_PATH is required for the training stage.")
+    inherited = os.environ.get("LD_LIBRARY_PATH", "")
+    paths = [path for path in library_path.split(":") if path]
+    for path in inherited.split(":"):
+        if path and path not in paths:
+            paths.append(path)
+    return {"LD_LIBRARY_PATH": ":".join(paths)}
+
+
 # mjlab's own --robot choice and motion-imitation task id per RoboMotion robot identifier.
 TRAINING_ROBOTS = {
     "unitree_g1": {"mjlab_robot": "g1", "task": "Unitree-G1-Tracking-No-State-Estimation"},
@@ -182,6 +197,7 @@ def run_training_stage(args: argparse.Namespace, source: Path, work_dir: Path, s
     robot = TRAINING_ROBOTS.get(args.robot)
     if robot is None:
         raise RuntimeError(f"Training is only supported for {sorted(TRAINING_ROBOTS)}; received --robot {args.robot}.")
+    runtime_env = training_runtime_environment(args)
 
     # Step 1: reshape the safe retargeted robot-motion NPZ into mjlab's CSV layout.
     # This runs in the training env, which already contains NumPy, MuJoCo, and
@@ -190,7 +206,7 @@ def run_training_stage(args: argparse.Namespace, source: Path, work_dir: Path, s
     csv_path = work_dir / "motion.csv"
     run(training_python(args, scripts / "robomotion_training_adapter.py", [
         "--motion", str(source), "--output", str(csv_path),
-    ]))
+    ]), extra_env=runtime_env)
     require(csv_path, "The NPZ-to-CSV converter completed without a CSV output.")
     conversion = json.loads(csv_path.with_suffix(".json").read_text(encoding="utf-8"))
 
@@ -201,7 +217,7 @@ def run_training_stage(args: argparse.Namespace, source: Path, work_dir: Path, s
         "--input-file", str(csv_path), "--output-name", npz_name,
         "--input-fps", str(conversion["fps"]), "--output-fps", str(args.training_output_fps),
         "--robot", robot["mjlab_robot"],
-    ]), cwd=training_root)
+    ]), cwd=training_root, extra_env=runtime_env)
     npz_path = training_root / "src" / "assets" / "motions" / robot["mjlab_robot"] / npz_name
     require(npz_path, "csv_to_npz.py completed without an npz motion file.")
 
@@ -233,6 +249,7 @@ def run_training_stage(args: argparse.Namespace, source: Path, work_dir: Path, s
                 "--env.viewer.max-extra-envs=0",
             ])
         run_tee(training_python(args, training_root / "scripts" / "train.py", train_arguments), training_log, cwd=training_root, extra_env={
+            **runtime_env,
             "WANDB_MODE": "offline",
             "WANDB_DIR": str(wandb_dir),
             "WANDB_NAME": experiment_name,
@@ -303,7 +320,7 @@ def run_training_stage(args: argparse.Namespace, source: Path, work_dir: Path, s
                 "--report", str(rollout_report),
                 "--width", str(args.training_video_width),
                 "--height", str(args.training_video_height),
-            ]), cwd=training_root)
+            ]), cwd=training_root, extra_env=runtime_env)
             require(rollout_video, "Best-policy evaluation completed without a video.")
             require(rollout_report, "Best-policy evaluation completed without a report.")
             artifacts.append(output(rollout_video, "VISUALIZATION", "visualization.policy-best-rollout/v1", "PREVIEW", "video/mp4"))

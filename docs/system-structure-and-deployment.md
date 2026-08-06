@@ -548,6 +548,13 @@ Choose a CUDA 13-compatible host. A network volume is preferable when the
 selected region/GPU supports it. Otherwise keep the same Pod and stop it; do
 not terminate it or delete its volume.
 
+The production image is based on NVIDIA CUDA 13.0.2. During bootstrap, the
+installer verifies that the persistent `unitree_rl_mjlab` environment contains
+its own `libstdc++` with `CXXABI_1.3.15`, installing the pinned-compatible
+Conda runtime only when missing. Training processes use that library path;
+other model environments remain isolated. Do not manually copy the host
+`/usr/lib/.../libstdc++.so.6` into the Conda environment.
+
 The entry point automatically:
 
 1. opens the restricted SSH tunnel to Server 1;
@@ -571,6 +578,12 @@ stored in `robomotion_control_ssh_key` matches the public key installed in
 `/home/robomotion-tunnel/.ssh/authorized_keys` on Server 1. A message mentioning
 `publickey,password` from an older image is a follow-on symptom of OpenSSH having
 ignored an unsafe key, not evidence that the tunnel user needs a password.
+
+If an older image reports `libicui18n.so.78` plus missing
+`CXXABI_1.3.15`, update the template and control-plane target to the current
+immutable worker image, then restart the Pod. The bootstrap will repair the
+persistent Conda runtime automatically. The `bind [::1]` warnings also identify
+an older image; current tunnel forwards listen on IPv4 loopback explicitly.
 
 ### 7.3 Create the Pod and record its ID
 

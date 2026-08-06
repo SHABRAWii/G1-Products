@@ -76,9 +76,9 @@ ssh -NT \
   -o ServerAliveCountMax=3 \
   -o StrictHostKeyChecking=yes \
   -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS" \
-  -L 15432:127.0.0.1:5432 \
-  -L 19000:127.0.0.1:9000 \
-  -L 13000:127.0.0.1:3000 \
+  -L 127.0.0.1:15432:127.0.0.1:5432 \
+  -L 127.0.0.1:19000:127.0.0.1:9000 \
+  -L 127.0.0.1:13000:127.0.0.1:3000 \
   "${ROBOMOTION_CONTROL_SSH_USER}@${ROBOMOTION_CONTROL_SSH_HOST}" &
 SSH_PID=$!
 trap 'kill "$SSH_PID" 2>/dev/null || true' EXIT INT TERM

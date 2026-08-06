@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import unittest
+from argparse import Namespace
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +19,27 @@ SPEC.loader.exec_module(MODULE)
 
 
 class StageContractTests(unittest.TestCase):
+    def test_training_commands_receive_the_conda_cpp_runtime_only(self):
+        args = Namespace(training_python="/workspace/conda-envs/unitree_rl_mjlab/bin/python")
+        with patch.dict(os.environ, {"LD_LIBRARY_PATH": "/usr/local/cuda/lib64"}, clear=False):
+            environment = MODULE.training_runtime_environment(args)
+        self.assertEqual(
+            environment["LD_LIBRARY_PATH"],
+            "/workspace/conda-envs/unitree_rl_mjlab/lib:/usr/local/cuda/lib64",
+        )
+
+    def test_runpod_runtime_contract_uses_cuda_13_and_ipv4_tunnels(self):
+        dockerfile = (ROOT / "deploy" / "Dockerfile.gpu-worker").read_text()
+        startup = (ROOT / "deploy" / "start-runpod-gpu-plane.sh").read_text()
+        installer = (ROOT / "deploy" / "install-direct-models.sh").read_text()
+        local_worker = (ROOT / "scripts" / "start-local-worker.sh").read_text()
+        self.assertIn("nvidia/cuda:13.0.2-cudnn-runtime-ubuntu22.04", dockerfile)
+        for port in (15432, 19000, 13000):
+            self.assertIn(f"-L 127.0.0.1:{port}:127.0.0.1:", startup)
+        self.assertIn("libstdcxx-ng>=14", installer)
+        self.assertIn("robomotion_training_cpp_runtime_ready", installer)
+        self.assertIn("robomotion_configure_training_runtime", local_worker)
+
     def test_training_log_is_parsed_and_best_saved_checkpoint_is_selected(self):
         from tempfile import TemporaryDirectory
 

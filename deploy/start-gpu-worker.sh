@@ -3,6 +3,9 @@
 # verify those environments, then start the real pipeline worker.
 set -euo pipefail
 
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PROJECT_ROOT/deploy/training-runtime-common.sh"
+
 PROMPTHMR_ROOT="${ROBOMOTION_PROMPTHMR_ROOT:-/opt/prompt-hmr}"
 GMR_ROOT="${ROBOMOTION_GMR_ROOT:-/opt/gmr}"
 TRAIN_ROOT="${ROBOMOTION_TRAIN_ROOT:-/opt/unitree-rl-mjlab}"
@@ -43,7 +46,11 @@ fi
 
 if $NEEDS_TRAINING; then
   [[ -f "$TRAIN_ROOT/scripts/train.py" ]] || fail "unitree_rl_mjlab source is incomplete. Set ROBOMOTION_TRAIN_ROOT."
-  conda run -n "$TRAIN_ENV" python -c 'import mjlab, torch; assert torch.__version__.startswith("2.12."); assert torch.version.cuda == "13.0"' \
+  robomotion_configure_training_runtime "$TRAIN_ENV" "${ROBOMOTION_TRAIN_PYTHON:-}" \
+    || fail "The $TRAIN_ENV training environment cannot be resolved."
+  robomotion_training_cpp_runtime_ready \
+    || fail "The training environment libstdc++ does not provide CXXABI_1.3.15."
+  robomotion_training_exec -c 'import mjlab, torch; assert torch.__version__.startswith("2.12."); assert torch.version.cuda == "13.0"' \
     || fail "Training environment is unavailable or does not match the verified torch 2.12/CUDA 13.0 contract."
   bash /app/deploy/verify-training-runtime.sh \
     || fail "The deterministic training runtime verification failed."
