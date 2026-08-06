@@ -19,6 +19,7 @@ export ROBOMOTION_LIVE_REPOSITORY="$REPOSITORY"
 python3 - <<'PY'
 import json
 import os
+import shlex
 import urllib.error
 import urllib.request
 
@@ -26,7 +27,7 @@ pod_id = os.environ["ROBOMOTION_LIVE_POD_ID"]
 revision = os.environ["ROBOMOTION_LIVE_REVISION"]
 repository = os.environ["ROBOMOTION_LIVE_REPOSITORY"]
 
-start_script = f'''set -euo pipefail
+worker_script = f'''set -euo pipefail
 LIVE=/workspace/robomotion-live
 if [[ ! -d "$LIVE/.git" ]]; then
   [[ ! -e "$LIVE" ]] || {{ echo "$LIVE exists but is not a Git checkout" >&2; exit 1; }}
@@ -52,9 +53,22 @@ fingerprint="$(sha256sum \
 printf '%s\n' "$fingerprint" > /workspace/robomotion/.gpu-runtime-contract-v1.sha256
 exec bash /app/deploy/start-runpod-gpu-plane.sh'''
 
+start_script = f'''set -uo pipefail
+LOG=/workspace/robomotion/live-start.log
+mkdir -p "$(dirname "$LOG")"
+set +e
+bash -lc {shlex.quote(worker_script)} 2>&1 | tee "$LOG"
+status=${{PIPESTATUS[0]}}
+set -e
+printf 'Live worker startup exited with code %s. Diagnostics remain available on port 8888.\n' "$status" | tee -a "$LOG"
+exec python3 -m http.server 8888 --directory /workspace/robomotion'''
+
 request = urllib.request.Request(
     f"https://rest.runpod.io/v1/pods/{pod_id}/update",
-    data=json.dumps({"dockerStartCmd": ["bash", "-lc", start_script]}).encode(),
+    data=json.dumps({
+        "dockerStartCmd": ["bash", "-lc", start_script],
+        "ports": ["22/tcp", "8888/http"],
+    }).encode(),
     headers={
         "Authorization": f"Bearer {os.environ['RUNPOD_API_KEY']}",
         "Content-Type": "application/json",
