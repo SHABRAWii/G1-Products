@@ -36,7 +36,9 @@ uses public-key authentication exclusively. This runtime path is intentionally
 not configurable; any stale `ROBOMOTION_SSH_DIR` template variable is ignored,
 and credential files left by older images are removed from `/workspace/.ssh`.
 
-The worker image and the pinned training wheel both use CUDA 13.0. The
+The worker image and the pinned training wheel both use CUDA 13.0. CUDA-backed
+Python packages own their pinned cuDNN libraries, so the base image carries the
+CUDA runtime without a second system-wide cuDNN copy. The
 `unitree_rl_mjlab` Conda environment also owns its `libstdc++`/`libgcc`
 runtime; training commands prepend that environment's library directory only
 for the lifetime of the command. This prevents ICU/`CXXABI_1.3.15` failures

@@ -33,7 +33,7 @@ class StageContractTests(unittest.TestCase):
         startup = (ROOT / "deploy" / "start-runpod-gpu-plane.sh").read_text()
         installer = (ROOT / "deploy" / "install-direct-models.sh").read_text()
         local_worker = (ROOT / "scripts" / "start-local-worker.sh").read_text()
-        self.assertIn("nvidia/cuda:13.0.2-cudnn-runtime-ubuntu22.04", dockerfile)
+        self.assertIn("nvidia/cuda:13.0.2-runtime-ubuntu22.04", dockerfile)
         for port in (15432, 19000, 13000):
             self.assertIn(f"-L 127.0.0.1:{port}:127.0.0.1:", startup)
         self.assertIn("libstdcxx-ng>=14", installer)

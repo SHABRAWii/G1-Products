@@ -1,4 +1,4 @@
-FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu22.04
+FROM nvidia/cuda:13.0.2-runtime-ubuntu22.04
 
 ARG PROMPTHMR_REF=4f8915c5b9603344c56e95fadb9a01a23ba2272d
 ARG GMR_REF=069b4fd48f440e813b2b4d69255c70f53e5f83fb
