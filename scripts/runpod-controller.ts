@@ -23,8 +23,12 @@ async function main() {
   const idleAfterMs =
     Number(process.env.RUNPOD_IDLE_AFTER_SECONDS ?? 900) * 1000;
   const pollMs = Number(process.env.RUNPOD_CONTROLLER_POLL_MS ?? 5000);
+  const retryMs = Number(process.env.RUNPOD_CONTROLLER_RETRY_MS ?? 30000);
   if (!Number.isFinite(idleAfterMs) || idleAfterMs < 60_000) {
     throw new Error("RUNPOD_IDLE_AFTER_SECONDS must be at least 60.");
+  }
+  if (!Number.isFinite(retryMs) || retryMs < pollMs) {
+    throw new Error("RUNPOD_CONTROLLER_RETRY_MS must be at least RUNPOD_CONTROLLER_POLL_MS.");
   }
   console.log(
     `RoboMotion RunPod controller started for ${podId}; idle stop is ${idleAfterMs / 1000}s.`,
@@ -39,6 +43,7 @@ async function main() {
     idleAfterMs,
     targetImage: process.env.RUNPOD_GPU_IMAGE?.trim() || undefined,
     pollMs,
+    retryMs,
     signal: controller.signal,
   });
 }

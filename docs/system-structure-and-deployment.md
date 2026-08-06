@@ -297,6 +297,7 @@ RUNPOD_POD_ID=
 RUNPOD_GPU_IMAGE=
 RUNPOD_IDLE_AFTER_SECONDS=900
 RUNPOD_CONTROLLER_POLL_MS=5000
+RUNPOD_CONTROLLER_RETRY_MS=30000
 ```
 
 Never commit `control-plane/.env`.
@@ -590,6 +591,7 @@ RUNPOD_POD_ID=YOUR_RUNPOD_POD_ID
 RUNPOD_GPU_IMAGE=ghcr.io/GITHUB_OWNER/robomotion-gpu@sha256:YOUR_DIGEST
 RUNPOD_IDLE_AFTER_SECONDS=900
 RUNPOD_CONTROLLER_POLL_MS=5000
+RUNPOD_CONTROLLER_RETRY_MS=30000
 ```
 
 Restart Server 1:
@@ -695,6 +697,13 @@ bash control-plane/deploy/up.sh
 
 The lifecycle controller applies the configured image while the Pod is
 stopped. There is no `git pull` inside RunPod.
+
+If RunPod reports that the original host has no free GPUs, the controller
+records a degraded heartbeat and retries every 30 seconds. A stopped Pod with
+local volume storage remains tied to that host. Either wait for that GPU to
+become available, or recover any required `/workspace` data before terminating
+and redeploying. Use a network volume for future Pods when host-independent
+redeployment is required.
 
 ## 10. Backups and capacity checks
 

@@ -168,66 +168,99 @@ export async function runPodControllerLoop(input: {
   targetImage?: string;
   signal?: AbortSignal;
   pollMs?: number;
+  retryMs?: number;
 }) {
   let idleSince: number | null = null;
   const pollMs = input.pollMs ?? 5000;
+  const retryMs = input.retryMs ?? Math.max(pollMs, 30_000);
   while (!input.signal?.aborted) {
-    const [pod, work] = await Promise.all([
-      input.client.getPod(),
-      gpuWorkState(),
-    ]);
-    const running = podIsRunning(pod);
-    if (work.pendingGpuWork) idleSince = null;
-    else if (running && idleSince === null) idleSince = Date.now();
-    const imageUpdatePending = Boolean(
-      input.targetImage && podImage(pod) !== input.targetImage,
-    );
-    const action = decideRunPodAction({
-      pendingGpuWork: work.pendingGpuWork,
-      readyWorker: work.readyWorker,
-      podRunning: running,
-      idleExpired: idleSince !== null && Date.now() - idleSince >= input.idleAfterMs,
-      imageUpdatePending,
-    });
-    if (action === "START") {
-      console.log("GPU work is ready; starting the configured RunPod Pod.");
-      await input.client.start();
-    } else if (action === "UPDATE" && input.targetImage) {
-      console.log(`Updating stopped RunPod Pod to ${input.targetImage}.`);
-      await input.client.updateImage(input.targetImage);
-    } else if (action === "STOP") {
-      console.log("GPU work is idle; stopping the configured RunPod Pod.");
-      await input.client.stop();
-      idleSince = null;
-    } else if (action === "DISPATCH") {
-      await dispatchQueuedJobs(work.queuedJobs);
+    let nextPollMs = pollMs;
+    try {
+      const [pod, work] = await Promise.all([
+        input.client.getPod(),
+        gpuWorkState(),
+      ]);
+      const running = podIsRunning(pod);
+      if (work.pendingGpuWork) idleSince = null;
+      else if (running && idleSince === null) idleSince = Date.now();
+      const imageUpdatePending = Boolean(
+        input.targetImage && podImage(pod) !== input.targetImage,
+      );
+      const action = decideRunPodAction({
+        pendingGpuWork: work.pendingGpuWork,
+        readyWorker: work.readyWorker,
+        podRunning: running,
+        idleExpired: idleSince !== null && Date.now() - idleSince >= input.idleAfterMs,
+        imageUpdatePending,
+      });
+      if (action === "START") {
+        console.log("GPU work is ready; starting the configured RunPod Pod.");
+        await input.client.start();
+      } else if (action === "UPDATE" && input.targetImage) {
+        console.log(`Updating stopped RunPod Pod to ${input.targetImage}.`);
+        await input.client.updateImage(input.targetImage);
+      } else if (action === "STOP") {
+        console.log("GPU work is idle; stopping the configured RunPod Pod.");
+        await input.client.stop();
+        idleSince = null;
+      } else if (action === "DISPATCH") {
+        await dispatchQueuedJobs(work.queuedJobs);
+      }
+      await prisma.workerHeartbeat.upsert({
+        where: { workerId: input.workerId },
+        update: {
+          status: "ready",
+          detail: JSON.stringify({
+            capability: "runpod_control",
+            podId: pod.id,
+            podRunning: running,
+            action,
+            pendingGpuWork: work.pendingGpuWork,
+            readyWorker: work.readyWorker,
+            targetImage: input.targetImage ?? null,
+            currentImage: podImage(pod),
+          }),
+        },
+        create: {
+          workerId: input.workerId,
+          status: "ready",
+          detail: JSON.stringify({
+            capability: "runpod_control",
+            podId: pod.id,
+            podRunning: running,
+            action,
+          }),
+        },
+      });
+    } catch (error) {
+      nextPollMs = retryMs;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`RunPod controller cycle failed; retrying in ${retryMs}ms:`, error);
+      try {
+        await prisma.workerHeartbeat.upsert({
+          where: { workerId: input.workerId },
+          update: {
+            status: "degraded",
+            detail: JSON.stringify({
+              capability: "runpod_control",
+              error: message,
+              retryAfterMs: retryMs,
+            }),
+          },
+          create: {
+            workerId: input.workerId,
+            status: "degraded",
+            detail: JSON.stringify({
+              capability: "runpod_control",
+              error: message,
+              retryAfterMs: retryMs,
+            }),
+          },
+        });
+      } catch (heartbeatError) {
+        console.error("Unable to record the degraded RunPod controller state:", heartbeatError);
+      }
     }
-    await prisma.workerHeartbeat.upsert({
-      where: { workerId: input.workerId },
-      update: {
-        status: "ready",
-        detail: JSON.stringify({
-          capability: "runpod_control",
-          podId: pod.id,
-          podRunning: running,
-          action,
-          pendingGpuWork: work.pendingGpuWork,
-          readyWorker: work.readyWorker,
-          targetImage: input.targetImage ?? null,
-          currentImage: podImage(pod),
-        }),
-      },
-      create: {
-        workerId: input.workerId,
-        status: "ready",
-        detail: JSON.stringify({
-          capability: "runpod_control",
-          podId: pod.id,
-          podRunning: running,
-          action,
-        }),
-      },
-    });
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    await new Promise((resolve) => setTimeout(resolve, nextPollMs));
   }
 }

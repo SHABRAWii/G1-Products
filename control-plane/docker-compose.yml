@@ -128,6 +128,7 @@ services:
       RUNPOD_GPU_IMAGE: ${RUNPOD_GPU_IMAGE:-}
       RUNPOD_IDLE_AFTER_SECONDS: ${RUNPOD_IDLE_AFTER_SECONDS:-900}
       RUNPOD_CONTROLLER_POLL_MS: ${RUNPOD_CONTROLLER_POLL_MS:-5000}
+      RUNPOD_CONTROLLER_RETRY_MS: ${RUNPOD_CONTROLLER_RETRY_MS:-30000}
     depends_on:
       migrate:
         condition: service_completed_successfully
