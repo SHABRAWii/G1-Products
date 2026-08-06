@@ -7,7 +7,10 @@ x-control-environment: &control-environment
   OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY}
   OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY}
   ROBOMOTION_MODEL_CACHE: /models
-  ROBOMOTION_DASHBOARD_URL: http://app:3000
+  # Chromium treats the single-label `app` host as the HSTS-preloaded .app
+  # domain and upgrades capture traffic to HTTPS. Use a private, non-HSTS
+  # network alias for server-side digital-twin rendering.
+  ROBOMOTION_DASHBOARD_URL: http://dashboard.internal:3000
 
 services:
   postgres:
@@ -70,6 +73,10 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dashboard.internal
     ports:
       - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3000}:3000"
     environment:
