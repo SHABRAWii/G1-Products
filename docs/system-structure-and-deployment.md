@@ -562,7 +562,9 @@ Tunnel credentials are recreated with mode `0600` under the container-local
 `/run/robomotion-ssh` directory on every start. They are never written to the
 persistent `/workspace` volume. The entry point validates the private key before
 opening the tunnel and permits public-key authentication only; it never falls
-back to a tunnel-user password.
+back to a tunnel-user password. Remove `ROBOMOTION_SSH_DIR` from existing RunPod
+templates. New images ignore that variable if it remains and delete only the
+legacy `/workspace/.ssh/control-plane` and `/workspace/.ssh/known_hosts` files.
 
 If startup reports `Permission denied (publickey)`, verify that the private key
 stored in `robomotion_control_ssh_key` matches the public key installed in

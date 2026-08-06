@@ -32,7 +32,9 @@ including models and Conda environments.
 Only model and environment caches belong on `/workspace`. The entry point
 recreates the tunnel key and known-hosts file under `/run/robomotion-ssh` with
 strict permissions on every container start, validates the private key, and
-uses public-key authentication exclusively.
+uses public-key authentication exclusively. This runtime path is intentionally
+not configurable; any stale `ROBOMOTION_SSH_DIR` template variable is ignored,
+and credential files left by older images are removed from `/workspace/.ssh`.
 
 `runpod-template.example.json` records the required shape. Provider, model,
 database, object-storage, and tunnel credentials are injected as RunPod

@@ -12,9 +12,23 @@ WORKSPACE="${ROBOMOTION_RUNPOD_WORKSPACE:-/workspace}"
 # Some provider-backed volume mounts retain or normalize file modes, which can
 # leave a private key as 0666 even after chmod. OpenSSH correctly refuses such
 # a key. /run is container-local, ephemeral, and supports strict Unix modes.
-SSH_DIR="${ROBOMOTION_SSH_DIR:-/run/robomotion-ssh}"
+# This path is intentionally not configurable: a stale RunPod template must not
+# be able to redirect private credentials back onto /workspace.
+SSH_DIR="/run/robomotion-ssh"
 SSH_KEY="$SSH_DIR/control-plane"
 SSH_KNOWN_HOSTS="$SSH_DIR/known_hosts"
+
+if [[ -n "${ROBOMOTION_SSH_DIR:-}" && "$ROBOMOTION_SSH_DIR" != "$SSH_DIR" ]]; then
+  printf 'Ignoring insecure ROBOMOTION_SSH_DIR override (%s); using %s.\n' \
+    "$ROBOMOTION_SSH_DIR" "$SSH_DIR" >&2
+fi
+
+# Delete only the two credential files written by pre-fix images. Leaving them
+# on a persistent volume would retain secrets even though they are no longer
+# used by the worker.
+rm -f "$WORKSPACE/.ssh/control-plane" "$WORKSPACE/.ssh/known_hosts" || \
+  printf 'Warning: unable to remove legacy tunnel credentials from %s/.ssh.\n' \
+    "$WORKSPACE" >&2
 
 required ROBOMOTION_CONTROL_SSH_HOST
 required ROBOMOTION_CONTROL_SSH_USER
