@@ -10,6 +10,7 @@ REPOSITORY="${ROBOMOTION_LIVE_REPOSITORY:-https://github.com/SHABRAWii/G1-Produc
 
 [[ -n "$POD_ID" ]] || { printf 'RunPod Pod ID is required.\n' >&2; exit 1; }
 [[ -n "${RUNPOD_API_KEY:-}" ]] || { printf 'RUNPOD_API_KEY is required.\n' >&2; exit 1; }
+REVISION="$(git rev-parse "${REVISION}^{commit}")"
 
 export ROBOMOTION_LIVE_POD_ID="$POD_ID"
 export ROBOMOTION_LIVE_REVISION="$REVISION"
