@@ -108,6 +108,7 @@ export ROBOMOTION_DASHBOARD_URL="http://127.0.0.1:13000"
 
 printf 'Control-plane tunnel ready; validating persistent GPU runtime.\n'
 bash /app/deploy/bootstrap-models.sh
+export ROBOMOTION_RUNTIME_VERIFIED=1
 printf 'Pose profile ready: <=%sp at %s FPS, max %s frames.\n' \
   "$ROBOMOTION_POSE_MAX_HEIGHT" "$ROBOMOTION_POSE_FPS" "$ROBOMOTION_POSE_MAX_FRAMES"
 printf 'GPU runtime ready; starting worker capabilities: %s\n' "$ROBOMOTION_WORKER_STAGES"
