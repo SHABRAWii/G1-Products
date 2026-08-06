@@ -7,6 +7,7 @@ set -euo pipefail
 POD_ID="${1:-${RUNPOD_POD_ID:-}}"
 REVISION="${2:-$(git rev-parse HEAD)}"
 REPOSITORY="${ROBOMOTION_LIVE_REPOSITORY:-https://github.com/SHABRAWii/G1-Products.git}"
+BUNDLE_URL="${ROBOMOTION_LIVE_BUNDLE_URL:-}"
 
 [[ -n "$POD_ID" ]] || { printf 'RunPod Pod ID is required.\n' >&2; exit 1; }
 [[ -n "${RUNPOD_API_KEY:-}" ]] || { printf 'RUNPOD_API_KEY is required.\n' >&2; exit 1; }
@@ -15,6 +16,7 @@ REVISION="$(git rev-parse "${REVISION}^{commit}")"
 export ROBOMOTION_LIVE_POD_ID="$POD_ID"
 export ROBOMOTION_LIVE_REVISION="$REVISION"
 export ROBOMOTION_LIVE_REPOSITORY="$REPOSITORY"
+export ROBOMOTION_LIVE_BUNDLE_URL="$BUNDLE_URL"
 
 python3 - <<'PY'
 import json
@@ -26,16 +28,23 @@ import urllib.request
 pod_id = os.environ["ROBOMOTION_LIVE_POD_ID"]
 revision = os.environ["ROBOMOTION_LIVE_REVISION"]
 repository = os.environ["ROBOMOTION_LIVE_REPOSITORY"]
+bundle_url = os.environ.get("ROBOMOTION_LIVE_BUNDLE_URL", "")
 
-worker_script = f'''set -euo pipefail
-LIVE=/workspace/robomotion-live
+if bundle_url:
+    update_source = f'''curl --fail --silent --show-error --location {shlex.quote(bundle_url)} \
+  | tar -xz -C /app'''
+else:
+    update_source = f'''LIVE=/workspace/robomotion-live
 if [[ ! -d "$LIVE/.git" ]]; then
   [[ ! -e "$LIVE" ]] || {{ echo "$LIVE exists but is not a Git checkout" >&2; exit 1; }}
   git clone --filter=blob:none --no-checkout {repository!r} "$LIVE"
 fi
 git -C "$LIVE" fetch --depth 1 origin {revision!r}
 git -C "$LIVE" checkout --detach --force FETCH_HEAD
-tar --exclude=.git --exclude=.next --exclude=node_modules -C "$LIVE" -cf - . | tar -C /app -xf -
+tar --exclude=.git --exclude=.next --exclude=node_modules -C "$LIVE" -cf - . | tar -C /app -xf -'''
+
+worker_script = f'''set -euo pipefail
+{update_source}
 
 PHMR_ENV=/workspace/conda-envs/phmr_pt2.4
 PHMR_SOURCE=/workspace/robomotion/sources/PromptHMR/python_libs/chumpy
