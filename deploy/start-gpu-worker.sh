@@ -28,6 +28,8 @@ has_stage training && NEEDS_TRAINING=true
 if $NEEDS_PROMPTHMR; then
   [[ -d "$MODEL_CACHE/prompthmr-data" ]] || fail "PromptHMR cache is missing. Check model-bootstrap logs."
   [[ -f "$MODEL_CACHE/prompthmr-data/.robomotion-checksums-v1.sha256" ]] || fail "PromptHMR integrity manifest is missing."
+  conda run -n "$PROMPTHMR_ENV" python -c 'import chumpy, smplx' \
+    || fail "PromptHMR dependencies are incomplete (chumpy/smplx import failed)."
   rm -rf "$PROMPTHMR_ROOT/data"
   ln -s "$MODEL_CACHE/prompthmr-data" "$PROMPTHMR_ROOT/data"
   if [[ "${ROBOMOTION_RUNTIME_VERIFIED:-0}" != "1" ]]; then

@@ -22,6 +22,7 @@ contract_fingerprint() {
 runtime_files_present() {
   [[ -r "$ROBOMOTION_MODEL_ROOT/worker-models.env" ]] \
     && [[ -x "$CONDA_ENVS_PATH/phmr_pt2.4/bin/python" ]] \
+    && "$CONDA_ENVS_PATH/phmr_pt2.4/bin/python" -c 'import chumpy, smplx' >/dev/null 2>&1 \
     && [[ -x "$CONDA_ENVS_PATH/gmr/bin/python" ]] \
     && [[ -x "$CONDA_ENVS_PATH/unitree_rl_mjlab/bin/python" ]] \
     && [[ -f "$MODEL_CACHE/prompthmr-data/.robomotion-checksums-v1.sha256" ]] \
