@@ -50,6 +50,37 @@ body {
   line-height: 1.45;
 }
 
+/* RunPod operations console */
+.runpod-console { display: grid; gap: 16px; }
+.runpod-console__hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 22px 24px; background: linear-gradient(135deg, #fff 0%, #f5f9ff 100%); }
+.runpod-console__title-row { display: flex; align-items: center; gap: 10px; }
+.runpod-console__title-row h2 { font-size: 20px; }
+.runpod-console__description { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
+.runpod-console__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.runpod-state { padding: 4px 9px; border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: .04em; }
+.runpod-state--online { color: #087443; background: var(--mint-soft); }
+.runpod-state--offline { color: #a15c00; background: var(--amber-soft); }
+.runpod-alert { padding: 12px 15px; border: 1px solid #f2c469; border-radius: 9px; color: #7b4c00; background: #fff8e7; font-size: 12px; }
+.runpod-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.runpod-metric { min-height: 145px; padding: 18px; }
+.runpod-metric > svg { color: var(--blue); }
+.runpod-metric span { display: block; margin-top: 16px; color: var(--muted); font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; }
+.runpod-metric strong { display: block; margin-top: 4px; color: var(--ink); font-size: 18px; }
+.runpod-metric small { display: block; overflow: hidden; margin-top: 7px; color: #8994a6; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.runpod-meter { height: 6px; margin-top: 12px; overflow: hidden; border-radius: 999px; background: #e8edf5; }
+.runpod-meter i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #1670f7, #12a568); transition: width 300ms ease; }
+.runpod-details { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 16px; }
+.runpod-definition-list { margin: 12px 0 0; }
+.runpod-definition-list div { display: flex; justify-content: space-between; gap: 20px; padding: 10px 0; border-top: 1px solid var(--line); }
+.runpod-definition-list dt { color: var(--muted); font-size: 11px; }
+.runpod-definition-list dd { margin: 0; color: var(--ink); font-size: 11px; font-weight: 700; }
+.runpod-note,.runpod-guidance { color: var(--muted); font-size: 11px; line-height: 1.65; }
+.runpod-note { margin: 12px 0 0; padding: 10px; border-radius: 7px; background: var(--amber-soft); }
+.runpod-guidance { margin: 13px 0 0; }
+.runpod-guidance strong { color: var(--ink); }
+@media (max-width: 1180px) { .runpod-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .runpod-console__hero { align-items: flex-start; flex-direction: column; } .runpod-console__actions { justify-content: flex-start; } .runpod-metrics,.runpod-details { grid-template-columns: 1fr; } }
+
 h1,
 h2,
 h3,

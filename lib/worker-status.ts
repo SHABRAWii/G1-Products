@@ -4,9 +4,34 @@ import { execFileSync } from "node:child_process";
 import { PipelineStage } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { deserializeWorkerDetail, parseWorkerStages, workerRequirements } from "@/lib/worker-capabilities";
+import type { GpuTelemetry } from "@/lib/worker-capabilities";
 
 export const localPipelineWorkerId = process.env.ROBOMOTION_WORKER_ID ?? "local-pipeline-worker";
 const staleAfterMs = 15_000;
+
+export function localGpuTelemetry(): GpuTelemetry | null {
+  try {
+    const output = execFileSync("nvidia-smi", [
+      "--query-gpu=name,utilization.gpu,memory.used,memory.total,power.draw,power.limit,temperature.gpu",
+      "--format=csv,noheader,nounits",
+    ], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().split("\n")[0];
+    if (!output) return null;
+    const [name, utilization, memoryUsed, memoryTotal, powerDraw, powerLimit, temperature] = output.split(",").map((value) => value.trim());
+    const numeric = [utilization, memoryUsed, memoryTotal, powerDraw, powerLimit, temperature].map(Number);
+    if (numeric.some((value) => !Number.isFinite(value))) return null;
+    return {
+      name,
+      utilizationPercent: numeric[0],
+      memoryUsedMiB: numeric[1],
+      memoryTotalMiB: numeric[2],
+      powerDrawWatts: numeric[3],
+      powerLimitWatts: numeric[4],
+      temperatureC: numeric[5],
+    };
+  } catch {
+    return null;
+  }
+}
 
 export function localPipelineConfiguration(stages = parseWorkerStages()) {
   const required = workerRequirements(stages);

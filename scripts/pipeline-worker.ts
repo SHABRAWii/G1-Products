@@ -1,5 +1,5 @@
 import { processLocalPipelineOnce } from "@/lib/local-pipeline-worker";
-import { localPipelineConfiguration, localPipelineWorkerId } from "@/lib/worker-status";
+import { localGpuTelemetry, localPipelineConfiguration, localPipelineWorkerId } from "@/lib/worker-status";
 import { parseWorkerStages, serializeWorkerDetail } from "@/lib/worker-capabilities";
 import { prisma } from "@/lib/db";
 
@@ -11,7 +11,7 @@ const capabilities = parseWorkerStages();
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => { stopping = true; controller.abort(); });
 
 async function recordHeartbeat(configurationError: string | null) {
-  const detail = serializeWorkerDetail(capabilities, configurationError);
+  const detail = serializeWorkerDetail(capabilities, configurationError, localGpuTelemetry());
   await prisma.workerHeartbeat.upsert({
     where: { workerId: localPipelineWorkerId },
     update: { status: configurationError ? "unavailable" : "ready", detail },

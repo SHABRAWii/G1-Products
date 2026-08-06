@@ -66,3 +66,31 @@ test("updates a stopped pod before starting newly queued work", () => {
     "UPDATE",
   );
 });
+
+test("a manual hold prevents queued work from restarting a stopped pod", () => {
+  assert.equal(
+    decideRunPodAction({
+      pendingGpuWork: true,
+      readyWorker: false,
+      podRunning: false,
+      idleExpired: false,
+      imageUpdatePending: false,
+      manualStop: true,
+    }),
+    "WAIT",
+  );
+});
+
+test("a manual stop request stops a running pod", () => {
+  assert.equal(
+    decideRunPodAction({
+      pendingGpuWork: false,
+      readyWorker: true,
+      podRunning: true,
+      idleExpired: false,
+      imageUpdatePending: false,
+      manualStop: true,
+    }),
+    "STOP",
+  );
+});

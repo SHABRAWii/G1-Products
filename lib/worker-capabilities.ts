@@ -36,19 +36,33 @@ export function workerRequirements(stages: ReadonlySet<PipelineStage>) {
   };
 }
 
-export function serializeWorkerDetail(stages: ReadonlySet<PipelineStage>, error: string | null) {
-  return JSON.stringify({ capabilities: [...stages].map((stage) => stage.toLowerCase()), error });
+export type GpuTelemetry = {
+  name: string;
+  utilizationPercent: number;
+  memoryUsedMiB: number;
+  memoryTotalMiB: number;
+  powerDrawWatts: number;
+  powerLimitWatts: number;
+  temperatureC: number;
+};
+
+export function serializeWorkerDetail(stages: ReadonlySet<PipelineStage>, error: string | null, gpu?: GpuTelemetry | null) {
+  return JSON.stringify({ capabilities: [...stages].map((stage) => stage.toLowerCase()), error, gpu: gpu ?? null });
 }
 
 export function deserializeWorkerDetail(detail: string | null) {
-  if (!detail) return { capabilities: new Set<PipelineStage>(executablePipelineStages), error: null as string | null };
+  if (!detail) return {
+    capabilities: new Set<PipelineStage>(executablePipelineStages),
+    error: null as string | null,
+    gpu: null as GpuTelemetry | null,
+  };
   try {
-    const parsed = JSON.parse(detail) as { capabilities?: string[]; error?: string | null };
+    const parsed = JSON.parse(detail) as { capabilities?: string[]; error?: string | null; gpu?: GpuTelemetry | null };
     if (!Array.isArray(parsed.capabilities) || !parsed.capabilities.length) {
-      return { capabilities: new Set<PipelineStage>(), error: parsed.error ?? "Worker did not advertise any capabilities." };
+      return { capabilities: new Set<PipelineStage>(), error: parsed.error ?? "Worker did not advertise any capabilities.", gpu: parsed.gpu ?? null };
     }
-    return { capabilities: parseWorkerStages(parsed.capabilities.join(",")), error: parsed.error ?? null };
+    return { capabilities: parseWorkerStages(parsed.capabilities.join(",")), error: parsed.error ?? null, gpu: parsed.gpu ?? null };
   } catch {
-    return { capabilities: new Set<PipelineStage>(executablePipelineStages), error: detail };
+    return { capabilities: new Set<PipelineStage>(executablePipelineStages), error: detail, gpu: null };
   }
 }

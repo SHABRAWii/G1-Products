@@ -81,6 +81,11 @@ services:
       - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3000}:3000"
     environment:
       <<: *control-environment
+      RUNPOD_API_KEY: ${RUNPOD_API_KEY:-}
+      RUNPOD_POD_ID: ${RUNPOD_POD_ID:-}
+      RUNPOD_GPU_IMAGE: ${RUNPOD_GPU_IMAGE:-}
+      RUNPOD_IDLE_AFTER_SECONDS: ${RUNPOD_IDLE_AFTER_SECONDS:-900}
+      ROBOMOTION_RUNPOD_CONTROLLER_ID: ${ROBOMOTION_RUNPOD_CONTROLLER_ID:-control-runpod-controller}
     volumes:
       - model-cache:/models:ro
     depends_on:

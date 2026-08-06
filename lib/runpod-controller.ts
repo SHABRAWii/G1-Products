@@ -1,8 +1,9 @@
 import { JobStatus, PipelineStage, StageStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { dispatchNextStage } from "@/lib/orchestration";
+import { getRunPodControlMode } from "@/lib/runpod-control-state";
 
-const gpuStages = [
+export const gpuStages = [
   PipelineStage.POSE_EXTRACTION,
   PipelineStage.ROBOT_RETARGETING,
   PipelineStage.VISUALIZATION,
@@ -29,7 +30,13 @@ export function decideRunPodAction(input: {
   podRunning: boolean;
   idleExpired: boolean;
   imageUpdatePending: boolean;
+  manualStop?: boolean;
 }): RunPodControllerDecision {
+  if (input.manualStop) {
+    if (input.podRunning) return "STOP";
+    if (input.imageUpdatePending) return "UPDATE";
+    return "WAIT";
+  }
   if (input.pendingGpuWork && input.readyWorker) return "DISPATCH";
   if (
     input.pendingGpuWork
@@ -97,16 +104,16 @@ export class RunPodClient {
   }
 }
 
-function podIsRunning(pod: RunPodPod) {
+export function podIsRunning(pod: RunPodPod) {
   return String(pod.desiredStatus ?? "").toUpperCase() === "RUNNING";
 }
 
-function podImage(pod: RunPodPod) {
+export function podImage(pod: RunPodPod) {
   return pod.imageName ?? pod.image ?? null;
 }
 
-async function gpuWorkState() {
-  const [pendingGpuWork, readyWorker, queuedJobs] = await Promise.all([
+export async function gpuWorkState() {
+  const [pendingGpuWork, readyWorker, queuedJobs, activeStages, readyStages] = await Promise.all([
     prisma.jobStage.count({
       where: {
         stage: { in: [...gpuStages] },
@@ -143,11 +150,25 @@ async function gpuWorkState() {
       orderBy: { createdAt: "asc" },
       take: 20,
     }),
+    prisma.jobStage.count({
+      where: {
+        stage: { in: [...gpuStages] },
+        status: StageStatus.RUNNING,
+      },
+    }),
+    prisma.jobStage.count({
+      where: {
+        stage: { in: [...gpuStages] },
+        status: StageStatus.READY,
+      },
+    }),
   ]);
   return {
     pendingGpuWork: pendingGpuWork > 0,
     readyWorker: Boolean(readyWorker),
     queuedJobs,
+    activeStages,
+    readyStages,
   };
 }
 
@@ -176,9 +197,10 @@ export async function runPodControllerLoop(input: {
   while (!input.signal?.aborted) {
     let nextPollMs = pollMs;
     try {
-      const [pod, work] = await Promise.all([
+      const [pod, work, controlMode] = await Promise.all([
         input.client.getPod(),
         gpuWorkState(),
+        getRunPodControlMode(),
       ]);
       const running = podIsRunning(pod);
       if (work.pendingGpuWork) idleSince = null;
@@ -192,6 +214,7 @@ export async function runPodControllerLoop(input: {
         podRunning: running,
         idleExpired: idleSince !== null && Date.now() - idleSince >= input.idleAfterMs,
         imageUpdatePending,
+        manualStop: controlMode === "MANUAL_STOP",
       });
       if (action === "START") {
         console.log("GPU work is ready; starting the configured RunPod Pod.");
@@ -215,8 +238,11 @@ export async function runPodControllerLoop(input: {
             podId: pod.id,
             podRunning: running,
             action,
+            controlMode,
             pendingGpuWork: work.pendingGpuWork,
             readyWorker: work.readyWorker,
+            activeStages: work.activeStages,
+            readyStages: work.readyStages,
             targetImage: input.targetImage ?? null,
             currentImage: podImage(pod),
           }),
@@ -229,6 +255,7 @@ export async function runPodControllerLoop(input: {
             podId: pod.id,
             podRunning: running,
             action,
+            controlMode,
           }),
         },
       });
