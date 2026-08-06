@@ -42,6 +42,24 @@ class StageContractTests(unittest.TestCase):
         self.assertIn("robomotion_training_cpp_runtime_ready", installer)
         self.assertIn("robomotion_configure_training_runtime", local_worker)
 
+    def test_runpod_warm_start_uses_a_versioned_runtime_marker(self):
+        bootstrap = (ROOT / "deploy" / "bootstrap-models.sh").read_text()
+        startup = (ROOT / "deploy" / "start-runpod-gpu-plane.sh").read_text()
+        worker = (ROOT / "deploy" / "start-gpu-worker.sh").read_text()
+        self.assertIn(".gpu-runtime-contract-v1.sha256", bootstrap)
+        self.assertIn("ROBOMOTION_FORCE_MODEL_VERIFY", bootstrap)
+        self.assertIn("runtime_files_present", bootstrap)
+        self.assertIn("ROBOMOTION_RUNTIME_VERIFIED=1", startup)
+        self.assertIn("ROBOMOTION_RUNTIME_VERIFIED", worker)
+
+    def test_training_cli_uses_unbuffered_python_and_tyro_boolean_spelling(self):
+        args = Namespace(training_python="/workspace/conda-envs/unitree_rl_mjlab/bin/python")
+        command = MODULE.training_python(args, Path("train.py"), ["--video=True"])
+        self.assertEqual(command[:2], [args.training_python, "-u"])
+        self.assertIn("--video=True", command)
+        source = (ROOT / "scripts" / "run-motion-stage.py").read_text()
+        self.assertNotIn('"--video=true"', source)
+
     def test_training_log_is_parsed_and_best_saved_checkpoint_is_selected(self):
         from tempfile import TemporaryDirectory
 

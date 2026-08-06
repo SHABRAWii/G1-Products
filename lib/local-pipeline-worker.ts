@@ -57,7 +57,7 @@ function run(command: string, args: string[], onLog: (line: string) => void, inp
     let cancellationReason = "Stage execution was cancelled.";
     let cancelledByOperator = true;
     let forceKill: NodeJS.Timeout | undefined;
-    const emit = (chunk: Buffer) => chunk.toString().split(/\r?\n/).filter(Boolean).forEach(onLog);
+    const emit = (chunk: Buffer) => chunk.toString().split(/[\r\n]+/).filter(Boolean).forEach(onLog);
     const cancel = (reason: string, operatorCancellation = true) => {
       if (cancellationRequested) return;
       cancellationRequested = true;
@@ -122,7 +122,11 @@ async function executeStage(stageId: string, signal?: AbortSignal) {
     ? createTrainingTelemetry(stageTrainingConfig.maxIterations)
     : null;
   let progressTimer: NodeJS.Timeout | undefined;
+  let activityTimer: NodeJS.Timeout | undefined;
   let progressWrite = Promise.resolve();
+  const startedAt = Date.now();
+  let lastChildOutputAt = startedAt;
+  const logPrefix = `[stage:${stage.jobId}:${stage.stage.toLowerCase()}:attempt-${attempt.attempt}]`;
   const appendLog = (line: string) => {
     logs.push(line);
     if (logs.length > 80) logs.shift();
@@ -160,6 +164,7 @@ async function executeStage(stageId: string, signal?: AbortSignal) {
       .catch((error) => console.error(`Unable to persist logs for stage ${stage.id}:`, error));
   };
   const scheduleProgress = (line: string) => {
+    console.log(`${logPrefix} ${line}`);
     appendLog(line);
     if (trainingTelemetry) ingestTrainingLog(trainingTelemetry, line);
     if (progressTimer) return;
@@ -194,7 +199,15 @@ async function executeStage(stageId: string, signal?: AbortSignal) {
       "--training-video-height", String(stageTrainingConfig.videoHeight),
     );
     if (stageTrainingConfig?.captureTrainingVideos) bridgeArgs.push("--training-capture-videos");
-    await run("python3", bridgeArgs, scheduleProgress, {
+    activityTimer = setInterval(() => {
+      const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000);
+      const silentSeconds = Math.round((Date.now() - lastChildOutputAt) / 1000);
+      scheduleProgress(`Stage is still running (${elapsedSeconds}s elapsed; ${silentSeconds}s since adapter output).`);
+    }, 30_000);
+    await run("python3", bridgeArgs, (line) => {
+      lastChildOutputAt = Date.now();
+      scheduleProgress(line);
+    }, {
       stageId: stage.id,
       signal,
       maxRuntimeMs: stageTrainingConfig ? stageTrainingConfig.maxRuntimeMinutes * 60_000 : undefined,
@@ -249,6 +262,7 @@ async function executeStage(stageId: string, signal?: AbortSignal) {
     await failStage(stage.jobId, stage.id, { retryable: true, errorCode: "LOCAL_WORKER_FAILED", message, logs, worker: "local-pipeline-worker" });
   } finally {
     if (progressTimer) clearTimeout(progressTimer);
+    if (activityTimer) clearInterval(activityTimer);
     await progressWrite;
     await rm(workDir, { recursive: true, force: true });
   }

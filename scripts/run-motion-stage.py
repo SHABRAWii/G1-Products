@@ -19,7 +19,7 @@ from pathlib import Path
 
 def run(command: list[str], cwd: Path | None = None, extra_env: dict[str, str] | None = None) -> None:
     print("$ " + " ".join(command), flush=True)
-    env = {**os.environ, **extra_env} if extra_env else None
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", **(extra_env or {})}
     completed = subprocess.run(command, text=True, cwd=cwd, env=env)
     if completed.returncode:
         raise RuntimeError(f"RoboMotion adapter exited with code {completed.returncode}")
@@ -27,7 +27,7 @@ def run(command: list[str], cwd: Path | None = None, extra_env: dict[str, str] |
 
 def run_tee(command: list[str], log_path: Path, cwd: Path | None = None, extra_env: dict[str, str] | None = None) -> None:
     print("$ " + " ".join(command), flush=True)
-    env = {**os.environ, **extra_env} if extra_env else None
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", **(extra_env or {})}
     with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
             command,
@@ -71,11 +71,11 @@ def visualization_outputs(motion: Path, scene: Path) -> list[dict[str, str]]:
 
 
 def conda_python(environment: str, script: Path, arguments: list[str]) -> list[str]:
-    return ["conda", "run", "--no-capture-output", "-n", environment, "python", str(script), *arguments]
+    return ["conda", "run", "--no-capture-output", "-n", environment, "python", "-u", str(script), *arguments]
 
 def training_python(args: argparse.Namespace, script: Path, arguments: list[str]) -> list[str]:
     if args.training_python:
-        return [args.training_python, str(script), *arguments]
+        return [args.training_python, "-u", str(script), *arguments]
     return conda_python(args.training_env, script, arguments)
 
 
@@ -241,7 +241,7 @@ def run_training_stage(args: argparse.Namespace, source: Path, work_dir: Path, s
         ]
         if args.training_capture_videos:
             train_arguments.extend([
-                "--video=true",
+                "--video=True",
                 f"--video-interval={args.training_video_interval_steps}",
                 f"--video-length={args.training_video_length_steps}",
                 f"--env.viewer.width={args.training_video_width}",
