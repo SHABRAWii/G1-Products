@@ -111,6 +111,45 @@ export async function dispatchNextStage(jobId: string) {
   });
 }
 
+/**
+ * Make the next executable stage visible to the external GPU controller
+ * without opening an attempt before a capable worker exists. This keeps a
+ * newly-created job queued while a stopped RunPod Pod is starting or waiting
+ * for provider capacity.
+ */
+export async function queueNextStage(jobId: string) {
+  return prisma.$transaction(async (tx) => {
+    const job = await tx.job.findUnique({
+      where: { id: jobId },
+      include: { stages: { orderBy: { position: "asc" } } },
+    });
+    if (!job) throw new OrchestrationError("Job was not found.", 404);
+    if (job.status !== JobStatus.QUEUED && job.status !== JobStatus.DISPATCHING) {
+      throw new OrchestrationError(`Job cannot be queued while ${job.status.toLowerCase()}.`);
+    }
+    const active = job.stages.find((stage) => stage.status === StageStatus.RUNNING || stage.status === StageStatus.LEASED);
+    if (active) throw new OrchestrationError("A stage is already running for this job.");
+    const stage = job.stages.find((candidate) => candidate.status === StageStatus.PENDING || candidate.status === StageStatus.READY);
+    if (!stage) throw new OrchestrationError("No queueable stage remains for this job.");
+    if (stage.stage === PipelineStage.POSE_REVIEW) {
+      const reviewTask = await openPoseReview(tx, jobId, stage.id);
+      return { state: "awaiting_review" as const, jobId, stageId: stage.id, reviewTaskId: reviewTask.id };
+    }
+    if (stage.status !== StageStatus.READY) {
+      await tx.jobStage.update({ where: { id: stage.id }, data: { status: StageStatus.READY } });
+      await recordJobEvent(tx, {
+        jobId,
+        type: "stage_queued",
+        stage: stage.stage,
+        message: `${stage.stage.toLowerCase()} is queued until a capable worker is ready.`,
+        metadata: { stageId: stage.id, adapter: stage.adapter },
+      });
+    }
+    await tx.job.update({ where: { id: jobId }, data: { status: JobStatus.QUEUED } });
+    return { state: "queued" as const, jobId, stageId: stage.id, stage: stage.stage, adapter: stage.adapter };
+  });
+}
+
 type OutputArtifact = { assetVersionId: string; role: StageArtifactRole };
 export type TrainingCompletion = {
   algorithm: string;
