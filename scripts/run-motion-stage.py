@@ -407,7 +407,8 @@ def main() -> None:
             prepared_video = work_dir / "prepared-input.mp4"
             require(prepared_video, "PromptHMR completed without its prepared video needed for the pose preview.")
             run(conda_python(args.prompthmr_env, scripts / "render-pose-skeleton.py", [
-                "--video", str(prepared_video), "--results", str(results), "--output", str(skeleton_preview),
+                "--video", str(video), "--tracking-video", str(prepared_video),
+                "--results", str(results), "--output", str(skeleton_preview),
             ]))
             require(skeleton_preview, "The pose skeleton renderer completed without an MP4 preview.")
             artifacts.append(output(skeleton_preview, "VISUALIZATION", "visualization.pose-skeleton/v1", "PREVIEW", "video/mp4"))

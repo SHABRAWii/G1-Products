@@ -44,6 +44,11 @@ export CONDA_ENVS_PATH="${CONDA_ENVS_PATH:-$WORKSPACE/conda-envs}"
 export CONDA_PKGS_DIRS="${CONDA_PKGS_DIRS:-$WORKSPACE/conda-pkgs}"
 export ROBOMOTION_WORKER_ID="${ROBOMOTION_WORKER_ID:-runpod-rtx4090-worker}"
 export ROBOMOTION_WORKER_STAGES="${ROBOMOTION_WORKER_STAGES:-pose_extraction,robot_retargeting,visualization,training}"
+# The RunPod image targets 24 GB RTX 4090 workers. Do not inherit the 6 GB
+# laptop safety profile from the generic adapter defaults.
+export ROBOMOTION_POSE_MAX_HEIGHT="${ROBOMOTION_POSE_MAX_HEIGHT:-720}"
+export ROBOMOTION_POSE_FPS="${ROBOMOTION_POSE_FPS:-24}"
+export ROBOMOTION_POSE_MAX_FRAMES="${ROBOMOTION_POSE_MAX_FRAMES:-720}"
 
 mkdir -p "$ROBOMOTION_MODEL_ROOT" "$ROBOMOTION_MODEL_CACHE" \
   "$CONDA_ENVS_PATH" "$CONDA_PKGS_DIRS"
@@ -103,5 +108,7 @@ export ROBOMOTION_DASHBOARD_URL="http://127.0.0.1:13000"
 
 printf 'Control-plane tunnel ready; validating persistent GPU runtime.\n'
 bash /app/deploy/bootstrap-models.sh
+printf 'Pose profile ready: <=%sp at %s FPS, max %s frames.\n' \
+  "$ROBOMOTION_POSE_MAX_HEIGHT" "$ROBOMOTION_POSE_FPS" "$ROBOMOTION_POSE_MAX_FRAMES"
 printf 'GPU runtime ready; starting worker capabilities: %s\n' "$ROBOMOTION_WORKER_STAGES"
 exec bash /app/deploy/start-gpu-worker.sh

@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test:motion": "tsx --test tests/artifact-download.test.ts tests/motion-geometry.test.ts tests/motion-playback.test.ts tests/runpod-controller.test.ts tests/training-config.test.ts tests/training-telemetry.test.ts tests/worker-capabilities.test.ts && python3 -m unittest tests/test_smplx_motion.py tests/test_stage_contracts.py && bash -lc '[ -f .robomotion/worker-models.env ] && source .robomotion/worker-models.env; conda run --no-capture-output -n \"${ROBOMOTION_GMR_ENV:-gmr}\" python -m unittest tests/test_g1_motion.py tests/test_digital_twin_render.py tests/test_training_adapter.py'",
+    "test:motion": "tsx --test tests/artifact-download.test.ts tests/motion-geometry.test.ts tests/motion-playback.test.ts tests/runpod-controller.test.ts tests/training-config.test.ts tests/training-telemetry.test.ts tests/worker-capabilities.test.ts && python3 -m unittest tests/test_smplx_motion.py tests/test_stage_contracts.py && bash -lc '[ -f .robomotion/worker-models.env ] && source .robomotion/worker-models.env; conda run --no-capture-output -n \"${ROBOMOTION_PROMPTHMR_ENV:-phmr_pt2.4}\" python tests/test_render_pose_skeleton.py; conda run --no-capture-output -n \"${ROBOMOTION_GMR_ENV:-gmr}\" python -m unittest tests/test_g1_motion.py tests/test_digital_twin_render.py tests/test_training_adapter.py'",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",

@@ -29,6 +29,12 @@ the control VPS, validates/reuses the persistent model runtime, and then starts
 one serialized worker advertising all GPU stages. Persist all of `/workspace`,
 including models and Conda environments.
 
+The RTX 4090 entry point defaults PromptHMR to a `720p / 24 FPS / 720 frame`
+profile. These values can be overridden with `ROBOMOTION_POSE_MAX_HEIGHT`,
+`ROBOMOTION_POSE_FPS`, and `ROBOMOTION_POSE_MAX_FRAMES`. The dashboard's 2D
+pose evidence is rendered at the source video's native resolution and FPS;
+the bounded inference copy is never exposed as the final preview.
+
 Only model and environment caches belong on `/workspace`. The entry point
 recreates the tunnel key and known-hosts file under `/run/robomotion-ssh` with
 strict permissions on every container start, validates the private key, and
@@ -36,7 +42,8 @@ uses public-key authentication exclusively. This runtime path is intentionally
 not configurable; any stale `ROBOMOTION_SSH_DIR` template variable is ignored,
 and credential files left by older images are removed from `/workspace/.ssh`.
 
-The worker image and the pinned training wheel both use CUDA 13.0. CUDA-backed
+The worker image uses the CUDA 12.6 runtime accepted by the current RTX 4090
+RunPod hosts, and the pinned training wheel uses its matching CUDA build. CUDA-backed
 Python packages own their pinned cuDNN libraries, so the base image carries the
 CUDA runtime without a second system-wide cuDNN copy. The
 `unitree_rl_mjlab` Conda environment also owns its `libstdc++`/`libgcc`
