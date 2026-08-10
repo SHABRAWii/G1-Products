@@ -17,6 +17,7 @@ Every job declares a **start stage**, an **end stage**, and a source artifact fo
 | [05-delivery-roadmap-risks.md](05-delivery-roadmap-risks.md) | Deployment, phased delivery plan, acceptance criteria, and risks. |
 | [06-training-stage-integration.md](06-training-stage-integration.md) | Status report: wiring `unitree_rl_mjlab` in as the real `TRAINING` stage — what's done, verified, and explicitly deferred. |
 | [07-control-and-gpu-plane-split.md](07-control-and-gpu-plane-split.md) | Implemented deployment split, background visualization exports, RunPod wake/update/idle behavior, and security boundary. |
+| [08-next-phase-roadmap.md](08-next-phase-roadmap.md) | Next-phase plan: native training visualization, removing the PromptHMR/SMPL-X commercial blocker, compute-provider flexibility, curated multi-robot training, and a bounded prompt-generated training-config wizard. |
 
 ## Locked MVP direction
 
